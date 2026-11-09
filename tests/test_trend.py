@@ -30,7 +30,7 @@ def test_trend_long_and_exit_band():
 def test_bounce_long_and_rally_short():
     rng = np.random.default_rng(0)
     base = 100 * np.exp(np.cumsum(-0.002 + rng.normal(0, 0.01, 320)))  # 하락 추세
-    s = T.signals(frame(base))
+    s = T.signals(frame(base), {"mr_gate": False})
     assert (s["mode"] == "TREND").sum() < 30
     modes = set(s["mode"].iloc[220:])
     assert "BOUNCE" in modes or "SHORT" in modes
@@ -100,3 +100,18 @@ def test_rsi_target_price_roundtrip():
     for tgt in (10, 30, 70, 90):
         p = T.rsi_target_price(c, 2, tgt)
         assert rsi(pd.concat([c, pd.Series([p])], ignore_index=True), 2).iloc[-1] == pytest.approx(tgt, abs=1e-6)
+
+
+def test_mr_gate_turns_off_losing_legs():
+    """역추세 다리의 최근 성과가 마이너스면 반등 숏·과매도 롱을 쉬고, 추세 롱은 그대로."""
+    rng = np.random.default_rng(5)
+    # 하락장에서 추세가 계속 이어지는(되돌림 없는) 구간 → 과매도 롱이 계속 손해
+    c = 100 * np.exp(np.cumsum(np.r_[0.002 + rng.normal(0, 0.008, 300), -0.004 + rng.normal(0, 0.012, 900)]))
+    off = T.signals(frame(c), {"mr_gate": False})
+    on = T.signals(frame(c), {"mr_gate": True, "gate_lookback": 252})
+    assert (on["mode"] == "TREND").equals(off["mode"] == "TREND")
+    mr_off = off["mode"].isin(["BOUNCE", "SHORT"]).sum()
+    mr_on = on["mode"].isin(["BOUNCE", "SHORT"]).sum()
+    assert mr_on < mr_off
+    gated = on["raw_mode"].isin(["BOUNCE", "SHORT"]) & (on["mode"] == "CASH")
+    assert (on.loc[gated, "mr_perf"].fillna(-1) <= 0).all()

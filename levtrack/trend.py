@@ -25,6 +25,8 @@ DEFAULTS = {
     "rsi_n": 2, "short_entry": 90, "short_exit": 30, "short_hold": 5,
     "bounce_entry": 10, "bounce_exit": 70, "bounce_hold": 5, "bounce_scale": 0.5,
     "rebalance_band": 0.10,
+    "mr_gate": True,          # 반등 숏·과매도 롱은 최근 성과가 플러스일 때만 사용
+    "gate_lookback": 756,     # 약 3년 (거래일)
 }
 MODES = {"TREND": "📈 추세 롱", "BOUNCE": "🔁 과매도 롱", "SHORT": "📉 반등 숏", "CASH": "💤 현금"}
 
@@ -78,11 +80,23 @@ def signals(u: pd.DataFrame, p: dict | None = None) -> pd.DataFrame:
         elif short:
             mode[i] = "SHORT"
     w = (p["vt"] / (3 * rv)).clip(upper=1.0).fillna(0)
+    raw_mode = mode.copy()
+    # 역추세 다리(과매도 롱·반등 숏) 성과 게이트: 그 다리를 '했다면'의 최근 성과가 마이너스면 쉰다
+    r = c.pct_change().fillna(0).to_numpy()
+    wv = w.to_numpy()
+    held_b = np.concatenate([[0.0], np.where(raw_mode[:-1] == "BOUNCE", wv[:-1] * p["bounce_scale"], 0.0)])
+    held_s = np.concatenate([[0.0], np.where(raw_mode[:-1] == "SHORT", wv[:-1], 0.0)])
+    mr_ret = pd.Series(held_b * 3 * r - held_s * 3 * r, index=c.index)
+    lb = int(p["gate_lookback"])
+    mr_perf = mr_ret.rolling(lb, min_periods=lb // 2).sum()
+    gate_on = (mr_perf > 0).to_numpy() if p["mr_gate"] else np.ones(n, dtype=bool)
+    gated = np.isin(mode, ["BOUNCE", "SHORT"]) & ~gate_on
+    mode = np.where(gated, "CASH", mode)
     scale = np.where(mode == "BOUNCE", p["bounce_scale"], np.where(mode == "CASH", 0.0, 1.0))
     out = pd.DataFrame({
         "Close": c, "sma": sma, "sma50": s50, "up_band": up_band, "dn_band": dn_band, "rsi2": r2, "rv": rv,
         "mode": mode, "side": np.where(mode == "SHORT", -1, np.where(mode == "CASH", 0, 1)),
-        "weight": w.to_numpy() * scale,
+        "weight": w.to_numpy() * scale, "raw_mode": raw_mode, "mr_perf": mr_perf, "mr_gate": gate_on,
     }, index=u.index)
     return out
 
@@ -116,7 +130,9 @@ def today(u: pd.DataFrame, p: dict | None = None) -> dict:
         "weight": float(last["weight"]), "changed": mode != prev["mode"], "prev_mode": prev["mode"],
         "days_in": days_in, "close": c, "sma": sma, "dist": c / sma - 1, "rsi2": float(last["rsi2"]),
         "rv": float(last["rv"]), "up_band": float(last["up_band"]), "dn_band": float(last["dn_band"]),
-        "triggers": triggers,
+        "triggers": triggers, "mr_gate": bool(last["mr_gate"]),
+        "mr_perf": None if pd.isna(last["mr_perf"]) else float(last["mr_perf"]),
+        "gated_signal": MODES[last["raw_mode"]] if last["raw_mode"] != mode else None,
     }
 
 

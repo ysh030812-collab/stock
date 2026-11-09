@@ -70,6 +70,16 @@ def _fmt_levels(df: pd.DataFrame):
     return df.style.format(num, na_rep="-")
 
 
+def _gate_text(td: dict, p: dict) -> str:
+    if p.get("short_entry", 0) > 1e8:
+        return "역추세(반등 숏·과매도 롱): 꺼짐"
+    perf = td.get("mr_perf")
+    perf_s = "" if perf is None else f" · 최근 3년 {perf:+.0%}"
+    if not p.get("mr_gate", True):
+        return f"역추세: 항상 사용{perf_s}"
+    return f"역추세: {'✅ 사용 중' if td.get('mr_gate') else '⏸️ 쉬는 중'}{perf_s}"
+
+
 def _badge(text: str, cls: str) -> str:
     return f'<span class="lt-badge {cls}">{text}</span>'
 
@@ -110,7 +120,8 @@ def dashboard(md, pairs: list[dict], p: dict, equity: float, go_plan) -> None:
                 except Exception:  # noqa: BLE001
                     lines = []
                 st.markdown('<div class="lt-sub">' + "<br>".join(lines)
-                            + f"<br>RSI(2) {td['rsi2']:.0f} · 20일 변동성 {td['rv']:.0%}</div>", unsafe_allow_html=True)
+                            + f"<br>RSI(2) {td['rsi2']:.0f} · 20일 변동성 {td['rv']:.0%}<br>{_gate_text(td, p)}</div>",
+                            unsafe_allow_html=True)
                 st.button("주문 보기 →", key=f"tgo_{pair['id']}", type="primary", width="stretch",
                           on_click=go_plan, args=(pair["id"], ins["ticker"] if ins else pair["instruments"][0]["ticker"]))
 
@@ -135,7 +146,12 @@ def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict
         head += f"  (어제 {TR.MODES[td['prev_mode']]} → 오늘 변경 🔔)"
     elif td["mode"] != "CASH":
         head += f"  ({td['days_in']}거래일째)"
-    box(head + "  \n" + " · ".join(td["triggers"]))
+    extra = ""
+    if td.get("gated_signal"):
+        extra = (f"  \n⏸️ {td['gated_signal']} 신호가 나왔지만 역추세 다리의 최근 3년 성과가 마이너스라 "
+                 "쉬고 현금으로 둡니다 (⚙️ 설정에서 끌 수 있음).")
+    box(head + "  \n" + " · ".join(td["triggers"]) + extra)
+    st.caption(_gate_text(td, p))
 
     held = _held(trades, pid)
     ins = _ins(pair, td["side"]) if td["side"] else None
@@ -204,6 +220,8 @@ def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict
             f"- **🔁 과매도 롱**: 200일선 아래 · RSI({p['rsi_n']}) < {p['bounce_entry']} 진입, "
             f"RSI > {p['bounce_exit']} 또는 {p['bounce_hold']}거래일 청산 → 3배 롱 (비중 ×{p['bounce_scale']})\n"
             f"- **비중** = min(100%, 목표 변동성 {p['vt']:.0%} ÷ (3 × 최근 20일 변동성))\n"
+            "- **역추세 자동 점검**: 반등 숏·과매도 롱을 '했다면'의 최근 3년 성과가 마이너스면 그 신호를 쉬고 현금 "
+            "(1999년 이전 실패 구간에서 손실을 크게 줄임)\n"
             "- 1999년 이후 실제 데이터(합성 3배 ETF) 백테스트로 고른 규칙입니다. 🧪 백테스트에서 직접 확인하세요."
         )
 

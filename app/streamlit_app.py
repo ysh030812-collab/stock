@@ -36,7 +36,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 금리 반영"
+APP_VERSION = "2026.11.09 역추세 게이트"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -96,6 +96,11 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
                                  step=500.0, key="eq")
         tl_vt = st.slider("추세 롱숏 목표 변동성 (%)", 20, 60, min(60, max(20, us.pick("tl_vt", 40))), 5, key="tl_vt",
                           help="비중 = 목표 변동성 ÷ (3 × 최근 20일 변동성), 최대 100%. 높일수록 공격적")
+        mr_on = st.toggle("반등 숏 · 과매도 롱 사용", value=us.pick("mr_on", True), key="mr_on",
+                          help="끄면 추세 롱만 합니다 (처음 보는 데이터 검증에서는 추세 롱만이 평균적으로 더 안정적)")
+        mr_gate = st.toggle("역추세 자동 점검 (최근 3년 성과가 마이너스면 쉬기)", value=us.pick("mrg", True), key="mrg",
+                            disabled=not mr_on,
+                            help="반등 숏·과매도 롱은 2000년 이후에만 통했고 그 전엔 손해였습니다. 효과가 사라지면 자동으로 멈춥니다.")
         swing_box = st.expander("🧪 스윙 전략(실험용) 설정", expanded=strategy == "swing")
         with swing_box:
             risk_ui = st.slider("1회 리스크 (계좌 대비 %)", 0.25, 3.0,
@@ -123,7 +128,7 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
                                  min(4.0, max(1.0, us.pick("atr", float(BASE_STRAT["levels"]["atr_mult"])))), 0.25, key="atr")
             pct_ui = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0,
                                min(10.0, max(1.0, us.pick("pct", BASE_STRAT["levels"]["percent"] * 100))), 0.5, key="pct")
-        us.save_if_changed({"strategy": strategy, "tl_vt": tl_vt, "mode": mode, "eq": equity, "risk": risk_ui, "maxw": maxw_ui, "tvol": tvol_ui,
+        us.save_if_changed({"strategy": strategy, "tl_vt": tl_vt, "mr_on": mr_on, "mrg": mr_gate, "mode": mode, "eq": equity, "risk": risk_ui, "maxw": maxw_ui, "tvol": tvol_ui,
                             "neu": neutral_mult, "vf": use_vf, "sl": sl_method, "tp": tp_method, "split": tp_split,
                             "atr": atr_mult, "pct": pct_ui})
         risk_pct, max_pair, target_vol, pct_stop = risk_ui / 100, maxw_ui / 100, tvol_ui / 100, pct_ui / 100
@@ -135,7 +140,9 @@ strat["sizing"].update(risk_pct=risk_pct, max_pair_weight=max_pair, target_vol=t
 strat["regime_multiplier"]["NEUTRAL"] = {"long": neutral_mult, "short": neutral_mult}
 strat["levels"].update(sl_method=sl_method, tp_method=tp_method, atr_mult=atr_mult, percent=pct_stop,
                        tp_fractions=TP_SPLITS[tp_split])
-strat["trend_ls"] = {**strat.get("trend_ls", {}), "vt": tl_vt / 100}
+strat["trend_ls"] = {**strat.get("trend_ls", {}), "vt": tl_vt / 100, "mr_gate": mr_gate}
+if not mr_on:
+    strat["trend_ls"].update(short_entry=1e9, bounce_entry=-1)
 
 
 @st.cache_resource(ttl=900, show_spinner="시세 불러오는 중…")
