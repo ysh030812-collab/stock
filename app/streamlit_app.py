@@ -28,13 +28,15 @@ from ui_style import apply_style  # noqa: E402
 import ui_journal as uj  # noqa: E402
 import ui_settings as us  # noqa: E402
 import ui_backtest as ubt  # noqa: E402
+import ui_trend as ut  # noqa: E402
+from levtrack import trend as TR  # noqa: E402
 from levtrack.journal import TP_SPLITS  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 백테스트"
+APP_VERSION = "2026.11.09 추세 롱숏"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -79,40 +81,49 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
     st.segmented_control("화면", VIEWS, key="view", required=True, label_visibility="collapsed")
     st.space("stretch")
     st.button("새로고침", icon="🔄", on_click=refresh)
-    eq_label = f"${ss.get('eq', us.pick('eq', 10_000.0)):,.0f} · {ss.get('risk', us.pick('risk', BASE_STRAT['sizing']['risk_pct'] * 100)):g}%"
+    _strat_name = {"trend": "추세 롱숏", "swing": "스윙"}[ss.get("strategy", us.pick("strategy", "trend", ["trend", "swing"]))]
+    eq_label = f"{_strat_name} · ${ss.get('eq', us.pick('eq', 10_000.0)):,.0f}"
     with st.popover(f"설정 · {eq_label}", icon="⚙️"):
         # 기본값은 저장된 설정(us.pick). 바뀌면 아래 save_if_changed 가 저장 → 다시 열어도 유지
         mode = st.segmented_control("데이터", ["yahoo", "demo"], key="mode", required=True,
                                     default=us.pick("mode", "yahoo", ["yahoo", "demo"]),
                                     format_func={"yahoo": "실시세 (무료)", "demo": "데모"}.get)
+        strategy = st.segmented_control("전략", ["trend", "swing"], key="strategy", required=True,
+                                        default=us.pick("strategy", "trend", ["trend", "swing"]),
+                                        format_func={"trend": "📈 추세 롱숏 (기본)", "swing": "🧪 스윙 (실험용)"}.get,
+                                        help="추세 롱숏: 실제 데이터 백테스트로 고른 3배 롱/숏 규칙. 스윙: 이전 규칙(검증상 우위 없음)")
         equity = st.number_input("계좌 평가금액 (USD)", min_value=100.0, value=max(100.0, us.pick("eq", 10_000.0)),
                                  step=500.0, key="eq")
-        risk_ui = st.slider("1회 리스크 (계좌 대비 %)", 0.25, 3.0,
-                            min(3.0, max(0.25, us.pick("risk", BASE_STRAT["sizing"]["risk_pct"] * 100))), 0.25, key="risk")
-        maxw_ui = st.slider("페어당 최대 비중 (%)", 5, 100,
-                            min(100, max(5, us.pick("maxw", int(BASE_STRAT["sizing"]["max_pair_weight"] * 100)))), 5,
-                            key="maxw")
-        tvol_ui = st.slider("목표 연변동성 (%)", 10, 80, min(80, max(10, us.pick("tvol", int(BASE_STRAT["sizing"]["target_vol"] * 100)))),
-                            5, key="tvol",
-                            help="레버리지 ETF 포지션이 계좌에 주는 변동성 한도. 높이면 변동성 큰 종목(SOXL 등)도 더 많이 삽니다.")
-        neutral_mult = st.slider("중립 국면 비중 계수", 0.0, 1.0,
-                                 min(1.0, max(0.0, us.pick("neu", float(BASE_STRAT["regime_multiplier"]["NEUTRAL"]["long"])))),
-                                 0.25, key="neu", help="일봉 국면이 중립일 때 비중에 곱하는 값 (1이면 줄이지 않음)")
-        use_vf = st.toggle("변동성 높을 때 비중 줄이기", value=us.pick("vf", True), key="vf",
-                           help="끄면 VIX·실현변동성이 높아도 비중을 줄이지 않습니다.")
-        sl_keys, tp_keys, split_keys = list(SL_METHODS), list(TP_METHODS), list(TP_SPLITS)
-        sl_method = st.selectbox("손절 방식", sl_keys, format_func=SL_METHODS.get, key="sl",
-                                 index=sl_keys.index(us.pick("sl", BASE_STRAT["levels"]["sl_method"], sl_keys)))
-        tp_method = st.selectbox("익절 방식", tp_keys, format_func=TP_METHODS.get, key="tp",
-                                 index=tp_keys.index(us.pick("tp", BASE_STRAT["levels"].get("tp_method", "r"), tp_keys)))
-        tp_split = st.selectbox("익절 분할 (익절1 / 익절2 / 트레일링 잔량)", split_keys, key="split",
-                                index=split_keys.index(us.pick("split", split_keys[0], split_keys)),
-                                help="익절1·익절2 에서 몇 %씩 팔지. 매매일지 → 통계의 '익절 분할 비교'로 내게 맞는 비율을 확인하세요.")
-        atr_mult = st.slider("ATR 배수 (ATR 손절)", 1.0, 4.0,
-                             min(4.0, max(1.0, us.pick("atr", float(BASE_STRAT["levels"]["atr_mult"])))), 0.25, key="atr")
-        pct_ui = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0,
-                           min(10.0, max(1.0, us.pick("pct", BASE_STRAT["levels"]["percent"] * 100))), 0.5, key="pct")
-        us.save_if_changed({"mode": mode, "eq": equity, "risk": risk_ui, "maxw": maxw_ui, "tvol": tvol_ui,
+        tl_vt = st.slider("추세 롱숏 목표 변동성 (%)", 20, 60, min(60, max(20, us.pick("tl_vt", 40))), 5, key="tl_vt",
+                          help="비중 = 목표 변동성 ÷ (3 × 최근 20일 변동성), 최대 100%. 높일수록 공격적")
+        swing_box = st.expander("🧪 스윙 전략(실험용) 설정", expanded=strategy == "swing")
+        with swing_box:
+            risk_ui = st.slider("1회 리스크 (계좌 대비 %)", 0.25, 3.0,
+                                min(3.0, max(0.25, us.pick("risk", BASE_STRAT["sizing"]["risk_pct"] * 100))), 0.25, key="risk")
+            maxw_ui = st.slider("페어당 최대 비중 (%)", 5, 100,
+                                min(100, max(5, us.pick("maxw", int(BASE_STRAT["sizing"]["max_pair_weight"] * 100)))), 5,
+                                key="maxw")
+            tvol_ui = st.slider("목표 연변동성 (%)", 10, 80, min(80, max(10, us.pick("tvol", int(BASE_STRAT["sizing"]["target_vol"] * 100)))),
+                                5, key="tvol",
+                                help="레버리지 ETF 포지션이 계좌에 주는 변동성 한도. 높이면 변동성 큰 종목(SOXL 등)도 더 많이 삽니다.")
+            neutral_mult = st.slider("중립 국면 비중 계수", 0.0, 1.0,
+                                     min(1.0, max(0.0, us.pick("neu", float(BASE_STRAT["regime_multiplier"]["NEUTRAL"]["long"])))),
+                                     0.25, key="neu", help="일봉 국면이 중립일 때 비중에 곱하는 값 (1이면 줄이지 않음)")
+            use_vf = st.toggle("변동성 높을 때 비중 줄이기", value=us.pick("vf", True), key="vf",
+                               help="끄면 VIX·실현변동성이 높아도 비중을 줄이지 않습니다.")
+            sl_keys, tp_keys, split_keys = list(SL_METHODS), list(TP_METHODS), list(TP_SPLITS)
+            sl_method = st.selectbox("손절 방식", sl_keys, format_func=SL_METHODS.get, key="sl",
+                                     index=sl_keys.index(us.pick("sl", BASE_STRAT["levels"]["sl_method"], sl_keys)))
+            tp_method = st.selectbox("익절 방식", tp_keys, format_func=TP_METHODS.get, key="tp",
+                                     index=tp_keys.index(us.pick("tp", BASE_STRAT["levels"].get("tp_method", "r"), tp_keys)))
+            tp_split = st.selectbox("익절 분할 (익절1 / 익절2 / 트레일링 잔량)", split_keys, key="split",
+                                    index=split_keys.index(us.pick("split", split_keys[0], split_keys)),
+                                    help="익절1·익절2 에서 몇 %씩 팔지. 매매일지 → 통계의 '익절 분할 비교'로 내게 맞는 비율을 확인하세요.")
+            atr_mult = st.slider("ATR 배수 (ATR 손절)", 1.0, 4.0,
+                                 min(4.0, max(1.0, us.pick("atr", float(BASE_STRAT["levels"]["atr_mult"])))), 0.25, key="atr")
+            pct_ui = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0,
+                               min(10.0, max(1.0, us.pick("pct", BASE_STRAT["levels"]["percent"] * 100))), 0.5, key="pct")
+        us.save_if_changed({"strategy": strategy, "tl_vt": tl_vt, "mode": mode, "eq": equity, "risk": risk_ui, "maxw": maxw_ui, "tvol": tvol_ui,
                             "neu": neutral_mult, "vf": use_vf, "sl": sl_method, "tp": tp_method, "split": tp_split,
                             "atr": atr_mult, "pct": pct_ui})
         risk_pct, max_pair, target_vol, pct_stop = risk_ui / 100, maxw_ui / 100, tvol_ui / 100, pct_ui / 100
@@ -124,6 +135,7 @@ strat["sizing"].update(risk_pct=risk_pct, max_pair_weight=max_pair, target_vol=t
 strat["regime_multiplier"]["NEUTRAL"] = {"long": neutral_mult, "short": neutral_mult}
 strat["levels"].update(sl_method=sl_method, tp_method=tp_method, atr_mult=atr_mult, percent=pct_stop,
                        tp_fractions=TP_SPLITS[tp_split])
+strat["trend_ls"] = {**strat.get("trend_ls", {}), "vt": tl_vt / 100}
 
 
 @st.cache_resource(ttl=900, show_spinner="시세 불러오는 중…")
@@ -185,6 +197,8 @@ def pat_text(pats) -> str:
 
 # ================================================================== 대시보드
 def view_dashboard() -> None:
+    if strategy == "trend":
+        return ut.dashboard(md, PAIRS, TR.params(strat), equity, go_plan)
     total, cap = 0.0, strat["sizing"]["max_total_weight"]
     with st.container(horizontal=True, gap="small"):
         for pair in PAIRS:
@@ -230,7 +244,14 @@ def view_dashboard() -> None:
 
 
 # ================================================================== 플래너
+def _save_trend_trade(t: dict) -> None:
+    uj.trades().append(t)
+    uj.save(f"{t['ticker']} {t['shares']}주 진입 기록")
+
+
 def view_planner() -> None:
+    if strategy == "trend":
+        return ut.planner(md, PAIRS, TR.params(strat), equity, fx, uj.trades(), _save_trend_trade)
     with st.container(horizontal=True, gap="medium"):
         pid = st.segmented_control("페어", [p["id"] for p in PAIRS], key="pair_id", required=True,
                                    format_func=lambda i: f"{PAIR_BY_ID[i]['name']} {PAIR_BY_ID[i]['signal']}",
@@ -426,6 +447,6 @@ def view_tracking() -> None:
 
 {VIEWS[0]: view_dashboard, VIEWS[1]: view_planner,
  VIEWS[2]: lambda: uj.view(md, fx, lambda pid, tf: get_frame(mode, pid, tf), strat),
- VIEWS[3]: lambda: ubt.view(md, mode, PAIRS, strat, equity),
+ VIEWS[3]: lambda: ubt.view(md, mode, PAIRS, strat, equity, strategy),
  VIEWS[4]: view_calc, VIEWS[5]: view_tracking}[ss["view"]]()
 st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")

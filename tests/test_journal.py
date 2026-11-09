@@ -273,3 +273,19 @@ def test_make_store_path_override_for_settings(tmp_path):
     s = GitHubStore("t", "o/r", "journal-data", "journal/settings.json", session=gh)
     s.save({"risk": 2.0})
     assert GitHubStore("t", "o/r", "journal-data", "journal/settings.json", session=gh).load() == {"risk": 2.0}
+
+
+def test_trend_trade_journal():
+    pair = load_pairs()[0]
+    t = J.new_trend_trade(pair=pair, ticker="TQQQ", k=3, mode="📈 추세 롱", fill_price=80, shares=10, u_now=500,
+                          ref_stop_u=485, exit_rule="종가 < 200일선×0.97 청산", entry_date="2026-01-02")
+    assert t["strategy"] == "trend" and t["plan"]["l_tps"] == []
+    assert t["plan"]["l_stop"] == pytest.approx(80 * (1 + 3 * (485 / 500 - 1)))
+    J.add_exit(t, price=90, shares=10, reason="신호 청산", exit_date="2026-02-02")
+    m = J.metrics(t)
+    assert m["closed"] and m["r"] == pytest.approx(100 / ((80 - t["plan"]["l_stop"]) * 10))
+    # 익절 분할 비교에서는 제외, 통계에는 포함
+    assert (J.split_comparison([t])["거래 수"] == 0).all()
+    assert J.stats([t])["n"] == 1
+    lv, changed = J.today_levels(t, u_now=510, l_now=86)
+    assert lv["tps"] == [] and not changed

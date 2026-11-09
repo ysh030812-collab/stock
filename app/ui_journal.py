@@ -91,13 +91,16 @@ def _exit_box(t: dict, cur: float | None, lv: dict | None = None) -> None:
     rem = J.remaining_shares(t)
     p = t["plan"]
     with st.expander("청산 기록"):
-        reason = st.segmented_control("사유", J.EXIT_REASONS, key=f"rsn_{t['id']}", required=True,
-                                      default=J.EXIT_REASONS[0])
+        trend_trade = t.get("strategy") == "trend"
+        reasons = ["신호 청산", "손절", "수동"] if trend_trade else [r for r in J.EXIT_REASONS if r != "신호 청산"]
+        reason = st.segmented_control("사유", reasons, key=f"rsn_{t['id']}", required=True, default=reasons[0])
         f1, f2 = p.get("tp_fractions", [0.33, 0.33])
         tp_today = {name: l for name, _, l in lv["tps"]} if lv else {}
-        sug_price = {"익절1": tp_today.get("익절1", p["l_tps"][0]), "익절2": tp_today.get("익절2", p["l_tps"][1]),
+        l_tps = p.get("l_tps") or [cur or t["entry_price"]] * 2
+        sug_price = {"익절1": tp_today.get("익절1", l_tps[0]), "익절2": tp_today.get("익절2", l_tps[1]),
+                     "신호 청산": cur or t["entry_price"],
                      "손절": lv["l_stop"] if lv else p["l_stop"],
-                     "트레일링": (lv["l_trail"] if lv and lv["l_trail"] else None) or cur or p["l_trail"],
+                     "트레일링": (lv["l_trail"] if lv and lv["l_trail"] else None) or cur or p.get("l_trail") or t["entry_price"],
                      "수동": cur or t["entry_price"]}[reason]
         sug_qty = {"익절1": round(t["shares"] * f1), "익절2": round(t["shares"] * f2)}.get(reason, rem)
         sug_qty = min(rem, max(1, sug_qty))
@@ -128,6 +131,8 @@ def _levels_for(t: dict, md, frame_fn, strat) -> tuple[dict | None, bool]:
     """오늘 기준 손절·트레일·익절 가격 계산 (데이터를 못 받으면 None)."""
     from levtrack.levels import chandelier
 
+    if t.get("strategy") == "trend":
+        return None, False
     try:
         u_now, l_now = md.last(t["signal"]), md.last(t["ticker"])
         d = frame_fn(t["pair_id"], t.get("timeframe", "1d"))
@@ -141,6 +146,24 @@ def _levels_for(t: dict, md, frame_fn, strat) -> tuple[dict | None, bool]:
         return J.today_levels(t, u_now=u_now, l_now=l_now, chandelier_u=ch)
     except Exception:  # noqa: BLE001
         return None, False
+
+
+def _trend_status(t: dict, md, strat) -> None:
+    """추세 롱숏 거래: 오늘 신호가 이 거래를 계속 보유하라는지 확인."""
+    from levtrack import trend as TR
+
+    try:
+        u = md.ohlc(t["signal"], "1d")
+        td = TR.today(u, TR.params(strat))
+    except Exception as e:  # noqa: BLE001
+        st.caption(f"신호 확인 실패: {e}")
+        return
+    want = {"TREND": 1, "BOUNCE": 1, "SHORT": -1}.get(td["mode"], 0)
+    if want == t["direction"]:
+        st.success(f"계속 보유 — 오늘 신호 {td['label']} (목표 비중 {td['weight']:.0%})", icon="✅")
+    else:
+        st.error(f"**청산 신호** — 오늘 신호 {td['label']}. 다음 거래일에 {t['ticker']} 를 매도하세요.", icon="🔔")
+    st.caption(" · ".join(td["triggers"]))
 
 
 def _today_table(t: dict, lv: dict) -> None:
@@ -217,10 +240,15 @@ def view(md, fx, frame_fn=None, strat=None) -> None:
                               delta_color="off", delta_arrow="off", border=True, width=150)
                 if lv:
                     _today_table(t, lv)
-                st.markdown(
-                    f'<div class="lt-sub">진입 시 계획(LETF): 손절 {p["l_stop"]:,.2f} · 익절1 {p["l_tps"][0]:,.2f} · '
-                    f'익절2 {p["l_tps"][1]:,.2f}'
-                    + (f"<br>메모: {t['note']}" if t.get("note") else "") + "</div>", unsafe_allow_html=True)
+                if t.get("strategy") == "trend":
+                    _trend_status(t, md, strat)
+                    st.markdown(f'<div class="lt-sub">청산 규칙: {p.get("exit_rule", "-")}'
+                                + (f"<br>메모: {t['note']}" if t.get("note") else "") + "</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f'<div class="lt-sub">진입 시 계획(LETF): 손절 {p["l_stop"]:,.2f} · 익절1 {p["l_tps"][0]:,.2f} · '
+                        f'익절2 {p["l_tps"][1]:,.2f}'
+                        + (f"<br>메모: {t['note']}" if t.get("note") else "") + "</div>", unsafe_allow_html=True)
                 if t["exits"]:
                     st.table(pd.DataFrame(t["exits"])[["date", "reason", "shares", "price"]]
                              .rename(columns={"date": "날짜", "reason": "사유", "shares": "수량", "price": "가격"})
@@ -264,9 +292,11 @@ def view(md, fx, frame_fn=None, strat=None) -> None:
         st.markdown("##### 누적 손익")
         st.line_chart(closed_df.set_index("진입일")["손익($)"].cumsum(), height=200)
 
-        st.markdown("##### 익절 분할 비교 (내 기록 기준)")
-        st.table(J.split_comparison(ts).style.format({"평균 R": "{:+.2f}R", "승률": "{:.0%}"}))
-        st.caption("내 거래의 익절1·익절2 도달 여부와 마지막 청산가로 '다른 분할 비율이었다면'을 다시 계산한 값입니다. "
+        cmp = J.split_comparison(ts)
+        if not cmp.empty and cmp["거래 수"].max() > 0:
+            st.markdown("##### 익절 분할 비교 (스윙 거래 기준)")
+            st.table(cmp.style.format({"평균 R": "{:+.2f}R", "승률": "{:.0%}"}))
+            st.caption("내 거래의 익절1·익절2 도달 여부와 마지막 청산가로 '다른 분할 비율이었다면'을 다시 계산한 값입니다. "
                    "거래가 20~30건 이상 쌓여야 믿을 만합니다.")
 
         for key in ("국면", "타이밍", "마지막 청산", "손절 방식", "익절 방식", "종목"):

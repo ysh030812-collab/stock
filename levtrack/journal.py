@@ -12,7 +12,7 @@ import pandas as pd
 
 from .leverage import convert_price
 
-EXIT_REASONS = ["익절1", "익절2", "트레일링", "손절", "수동"]
+EXIT_REASONS = ["익절1", "익절2", "트레일링", "손절", "신호 청산", "수동"]
 TP_SPLITS = {
     "균형 33/33/34": [0.33, 0.33],
     "빠른 확보 50/30/20": [0.50, 0.30],
@@ -64,6 +64,28 @@ def new_trade(plan, *, pair_id: str, fill_price: float, shares: int, entry_date:
         "snapshot": snap,
         "note": note,
         "exits": [],
+    }
+
+
+def new_trend_trade(*, pair: dict, ticker: str, k: float, mode: str, fill_price: float, shares: int, u_now: float,
+                    ref_stop_u: float, exit_rule: str, entry_date: str | None = None, note: str = "", fee: float = 0.0,
+                    fx: float | None = None, weight: float | None = None) -> dict:
+    """추세 롱숏 전략 거래. 익절·트레일 대신 '신호 청산'(exit_rule)으로 관리.
+    ref_stop_u: R 계산용 참고 손절(기초 가격)."""
+    direction = 1 if k > 0 else -1
+    l_stop = max(0.0, fill_price * (1 + k * (ref_stop_u / u_now - 1)))
+    return {
+        "id": uuid.uuid4().hex[:10],
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "strategy": "trend",
+        "pair_id": pair["id"], "signal": pair["signal"], "ticker": ticker, "k": k, "direction": direction,
+        "timeframe": "1d", "entry_date": entry_date or _today(), "entry_price": float(fill_price),
+        "shares": int(shares), "entry_fee": float(fee), "fx": fx,
+        "plan": {"u_entry": u_now, "u_stop": ref_stop_u, "u_tps": [], "l_entry": fill_price, "l_stop": l_stop,
+                 "l_tps": [], "l_trail": None, "sl_method": "신호", "tp_method": "신호", "tp_fractions": [0.0, 0.0],
+                 "planned_shares": int(shares), "exit_rule": exit_rule, "weight": weight},
+        "snapshot": {"regime": mode, "timing": mode},
+        "note": note, "exits": [],
     }
 
 
@@ -216,7 +238,7 @@ def split_comparison(trades: list[dict], splits: dict[str, list[float]] | None =
     rows = []
     sample = []
     for t in trades:
-        if not is_closed(t):
+        if not is_closed(t) or len(t["plan"].get("l_tps") or []) < 2:  # 추세 롱숏 거래는 익절 분할이 없음
             continue
         risk = risk_per_share(t)
         if math.isnan(risk):

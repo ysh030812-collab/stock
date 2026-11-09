@@ -85,3 +85,20 @@ sizing:
   max_pair_weight: 0.30   # 페어 하나당 최대 비중
   max_total_weight: 0.60  # 레버리지 ETF 합산 최대 비중
   gap_pct: 0.05           # 갭 시나리오: 기초가 손절 방향으로 5% 갭
+
+# 추세 롱숏 (기본 전략, 3배 롱/숏) — levtrack/trend.py
+# 1999~2026 실제 데이터(합성 3배 ETF)로 고른 값. 목표 변동성(vt)은 앱 설정에서 조절.
+trend_ls:
+  ma: 200               # 추세 기준 이동평균
+  buf: 0.03             # 진입 +3% / 청산 −3% (선 근처 잦은 매매 방지)
+  vt: 0.40              # 목표 연변동성 → 비중 = vt / (3 × 20일 변동성), 최대 100%
+  vol_window: 20
+  rsi_n: 2
+  short_entry: 90       # 하락 추세에서 RSI(2) > 90 반등 과열 → 3배 숏
+  short_exit: 30
+  short_hold: 5         # 최대 보유 거래일
+  bounce_entry: 10      # 200일선 아래 RSI(2) < 10 과매도 → 3배 롱(절반)
+  bounce_exit: 70
+  bounce_hold: 5
+  bounce_scale: 0.5
+  rebalance_band: 0.10  # 목표 비중과 10%p 이상 차이 날 때만 조정
