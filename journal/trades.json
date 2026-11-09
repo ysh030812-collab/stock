@@ -1,0 +1,50 @@
+[
+ {
+  "id": "4e21d40903",
+  "created_at": "2026-11-09T05:41:08",
+  "pair_id": "NDX",
+  "signal": "QQQ",
+  "ticker": "SQQQ",
+  "k": -3,
+  "direction": -1,
+  "timeframe": "1d",
+  "entry_date": "2026-11-09",
+  "entry_price": 47.7,
+  "shares": 17,
+  "entry_fee": 0.0,
+  "fx": 1352.1800537109375,
+  "plan": {
+   "u_entry": 656.0999755859375,
+   "u_stop": 678.2431051208583,
+   "u_tps": [
+    615.5496684570312,
+    575.4794093017579,
+    555.5999755859375
+   ],
+   "l_entry": 47.70000076293945,
+   "l_stop": 42.870429043631056,
+   "l_tps": [
+    56.54430690359518,
+    65.28391121727054,
+    69.619755015609
+   ],
+   "l_trail": 39.56602554022668,
+   "sl_method": "support",
+   "tp_method": "resistance",
+   "tp_fractions": [
+    0.29411764705882354,
+    0.29411764705882354
+   ],
+   "planned_shares": 17
+  },
+  "snapshot": {
+   "regime": "BEAR",
+   "bull": 8.9,
+   "bear": 90.7,
+   "vol_factor": 0.28,
+   "timing": "⏳ 눌림 대기"
+  },
+  "note": "",
+  "exits": []
+ }
+]
