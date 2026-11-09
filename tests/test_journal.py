@@ -175,3 +175,21 @@ def test_token_cleanup_and_checks():
     s = GitHubStore("tok", "o/r", session=Bad())
     with pytest.raises(StoreError, match="토큰 값이 틀렸거나"):
         s.load()
+
+
+def test_diagnose_reports_each_step():
+    class GH(FakeGitHub):
+        def __init__(self, user_code=200):
+            super().__init__()
+            self.user_code = user_code
+
+        def get(self, url, params=None):
+            if url.endswith("/user"):
+                return FakeResp(self.user_code, {"login": "me"})
+            return super().get(url, params)
+
+    token = "github_pat_" + "B" * 82
+    ok = GitHubStore(token, "o/r", session=GH()).diagnose()
+    assert [x[0] for x in ok] == [True, True, True] and "me" in ok[0][1]
+    bad = GitHubStore(token, "o/r", session=GH(401)).diagnose()
+    assert bad[0][0] is False and "…BBBB (93자)" in bad[0][1]

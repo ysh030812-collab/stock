@@ -138,7 +138,15 @@ def view(md, fx) -> None:
         st.warning("일지가 **서버 파일**에 저장되고 있습니다. Streamlit Cloud 에서는 앱이 재시작되면 지워질 수 있으니 "
                    "아래 **백업**을 받아 두거나, README 의 'GitHub 저장 설정'을 해 주세요.", icon="⚠️")
     else:
-        st.caption(f"저장 위치: {s.label}")
+        st.caption(f"저장 위치: {s.label} · 토큰 {s.fingerprint}")
+    if s.kind == "github" and (ss.get("journal_err") or st.toggle("GitHub 연결 테스트", key="gh_diag")):
+        if ss.get("journal_err"):
+            st.markdown("**GitHub 연결 테스트**")
+        try:
+            for ok, msg in s.diagnose():
+                (st.success if ok else st.error)(msg, icon="✅" if ok else "❌")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"연결 테스트 실패: {e}")
 
     prices = {}
     for tk in {t["ticker"] for t in ts if not J.is_closed(t)}:

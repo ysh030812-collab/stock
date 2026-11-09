@@ -47,6 +47,7 @@ class GitHubStore:
         import requests
 
         self.repo, self.branch, self.path = repo, branch, path
+        self.fingerprint = f"{token[:15]}…{token[-4:]} ({len(token)}자)" if len(token) > 20 else f"({len(token)}자)"
         self.s = session or requests.Session()
         self.s.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
                                "X-GitHub-Api-Version": "2022-11-28"})
@@ -68,6 +69,27 @@ class GitHubStore:
             }.get(r.status_code, r.text[:200])
             raise StoreError(f"GitHub {what} 실패 ({r.status_code}): {hint}")
         return r
+
+    def diagnose(self) -> list[tuple[bool, str]]:
+        """연결 테스트: 토큰 인증 → 저장소 접근 → 쓰기 권한 순으로 확인."""
+        out = []
+        r = self.s.get(f"{API}/user")
+        if r.status_code != 200:
+            out.append((False, f"토큰 인증 실패 ({r.status_code}) — 토큰 값이 틀렸거나 만료/삭제됨. 사용 중인 토큰: {self.fingerprint}"))
+            return out
+        out.append((True, f"토큰 인증 성공 — GitHub 계정 {r.json().get('login')}"))
+        r = self.s.get(self._url(""))
+        if r.status_code != 200:
+            out.append((False, f"저장소 {self.repo} 접근 실패 ({r.status_code}) — 토큰의 Repository access 에 이 저장소를 선택하세요"))
+            return out
+        out.append((True, f"저장소 {self.repo} 접근 가능"))
+        # 쓰기 권한: 기본 브랜치에 빈 ref 생성 없이 확인하는 공식 방법이 없어, 일지 브랜치 확인/생성으로 대신함
+        try:
+            self._ensure_branch()
+            out.append((True, f"쓰기 권한 확인 — {self.branch} 브랜치 준비됨"))
+        except StoreError as e:
+            out.append((False, f"쓰기 권한 없음 — 토큰의 Contents 권한을 'Read and write' 로 바꾸세요 ({e})"))
+        return out
 
     def _ensure_branch(self) -> None:
         r = self.s.get(self._url(f"git/ref/heads/{self.branch}"))
