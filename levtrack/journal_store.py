@@ -80,10 +80,20 @@ class GitHubStore:
         if r.status_code != 200:
             out.append((False, f"토큰 인증 실패 ({r.status_code}) — 토큰 값이 틀렸거나 만료/삭제됨. 사용 중인 토큰: {self.fingerprint}"))
             return out
-        out.append((True, f"토큰 인증 성공 — GitHub 계정 {r.json().get('login')}"))
+        scopes = getattr(r, "headers", {}).get("X-OAuth-Scopes")  # Classic 토큰만 이 헤더가 있음
+        classic = scopes is not None
+        scope_txt = f" · 권한 범위: {scopes or '(없음)'}" if classic else ""
+        out.append((True, f"토큰 인증 성공 — GitHub 계정 {r.json().get('login')}{scope_txt}"))
         r = self.s.get(self._url(""))
         if r.status_code != 200:
-            out.append((False, f"저장소 {self.repo} 접근 실패 ({r.status_code}) — 토큰의 Repository access 에 이 저장소를 선택하세요"))
+            if classic and "repo" not in [x.strip() for x in scopes.split(",")]:
+                fix = ("Classic 토큰에 'repo' 권한이 없습니다 → github.com/settings/tokens 에서 이 토큰을 눌러 "
+                       "맨 위 'repo' 를 체크하고 Update token (토큰 값은 그대로)")
+            elif classic:
+                fix = "저장소 이름(Secrets 의 repo)이 맞는지 확인하세요"
+            else:
+                fix = "토큰의 Repository access 에 이 저장소를 선택하세요"
+            out.append((False, f"저장소 {self.repo} 접근 실패 ({r.status_code}) — {fix}"))
             return out
         out.append((True, f"저장소 {self.repo} 접근 가능"))
         default = r.json().get("default_branch", "main")

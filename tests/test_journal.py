@@ -102,8 +102,9 @@ def test_local_store_roundtrip(tmp_path):
 
 
 class FakeResp:
-    def __init__(self, code, data=None):
+    def __init__(self, code, data=None, headers=None):
         self.status_code, self._d, self.text = code, data or {}, json.dumps(data or {})
+        self.headers = headers or {}
 
     def json(self):
         return self._d
@@ -216,3 +217,17 @@ def test_smart_quotes_and_odd_chars():
 
     assert clean_token("“ghp_" + "D" * 36 + "”") == "ghp_" + "D" * 36
     assert "둥근 따옴표" in token_problem("ghp_ab“cd")
+
+
+def test_diagnose_classic_token_without_repo_scope():
+    class Classic(FakeGitHub):
+        def get(self, url, params=None):
+            if url.endswith("/user"):
+                return FakeResp(200, {"login": "me"}, {"X-OAuth-Scopes": "public_repo, read:user"})
+            if url.endswith("/repos/o/r/"):
+                return FakeResp(404, {"message": "Not Found"})
+            return super().get(url, params)
+
+    res = GitHubStore("ghp_" + "E" * 36, "o/r", session=Classic()).diagnose()
+    assert res[0][0] and "public_repo" in res[0][1]
+    assert res[1][0] is False and "'repo' 권한이 없습니다" in res[1][1]
