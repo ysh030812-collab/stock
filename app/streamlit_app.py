@@ -26,13 +26,14 @@ from levtrack.planner import build_plan, sigma_daily_from  # noqa: E402
 from ui_chart import OVERLAYS, PANELS, PERIODS, build_chart  # noqa: E402
 from ui_style import apply_style  # noqa: E402
 import ui_journal as uj  # noqa: E402
+import ui_settings as us  # noqa: E402
 from levtrack.journal import TP_SPLITS  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 차트 x축 정렬"
+APP_VERSION = "2026.11.09 설정 자동 저장"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -71,42 +72,50 @@ def refresh() -> None:
 
 
 # ------------------------------------------------------------------ 상단 바 (내비게이션 · 설정)
-# 설정값은 URL 에 저장된다 (bind="query-params"). 설정 후 홈 화면에 추가하면 그 값으로 열린다.
+# 설정값은 일지 저장소(GitHub journal-data 브랜치의 journal/settings.json)에 자동 저장된다 → 다시 열어도 유지
 with st.container(horizontal=True, vertical_alignment="center", gap="small"):
     st.markdown("### 📈 LevTrack")
     st.segmented_control("화면", VIEWS, key="view", required=True, label_visibility="collapsed")
     st.space("stretch")
     st.button("새로고침", icon="🔄", on_click=refresh)
-    eq_label = f"${ss.get('eq', 10_000.0):,.0f} · {ss.get('risk', BASE_STRAT['sizing']['risk_pct'] * 100):g}%"
+    eq_label = f"${ss.get('eq', us.pick('eq', 10_000.0)):,.0f} · {ss.get('risk', us.pick('risk', BASE_STRAT['sizing']['risk_pct'] * 100)):g}%"
     with st.popover(f"설정 · {eq_label}", icon="⚙️"):
-        mode = st.segmented_control("데이터", ["yahoo", "demo"], key="mode", required=True, default="yahoo",
-                                    format_func={"yahoo": "실시세 (무료)", "demo": "데모"}.get, bind="query-params")
-        equity = st.number_input("계좌 평가금액 (USD)", min_value=100.0, value=10_000.0, step=500.0, key="eq",
-                                 bind="query-params")
-        risk_pct = st.slider("1회 리스크 (계좌 대비 %)", 0.25, 3.0, BASE_STRAT["sizing"]["risk_pct"] * 100, 0.25,
-                             key="risk", bind="query-params") / 100
-        max_pair = st.slider("페어당 최대 비중 (%)", 5, 100, int(BASE_STRAT["sizing"]["max_pair_weight"] * 100), 5,
-                             key="maxw", bind="query-params") / 100
-        target_vol = st.slider("목표 연변동성 (%)", 10, 80, int(BASE_STRAT["sizing"]["target_vol"] * 100), 5,
-                               key="tvol", bind="query-params",
-                               help="레버리지 ETF 포지션이 계좌에 주는 변동성 한도. 높이면 변동성 큰 종목(SOXL 등)도 더 많이 삽니다.") / 100
+        # 기본값은 저장된 설정(us.pick). 바뀌면 아래 save_if_changed 가 저장 → 다시 열어도 유지
+        mode = st.segmented_control("데이터", ["yahoo", "demo"], key="mode", required=True,
+                                    default=us.pick("mode", "yahoo", ["yahoo", "demo"]),
+                                    format_func={"yahoo": "실시세 (무료)", "demo": "데모"}.get)
+        equity = st.number_input("계좌 평가금액 (USD)", min_value=100.0, value=max(100.0, us.pick("eq", 10_000.0)),
+                                 step=500.0, key="eq")
+        risk_ui = st.slider("1회 리스크 (계좌 대비 %)", 0.25, 3.0,
+                            min(3.0, max(0.25, us.pick("risk", BASE_STRAT["sizing"]["risk_pct"] * 100))), 0.25, key="risk")
+        maxw_ui = st.slider("페어당 최대 비중 (%)", 5, 100,
+                            min(100, max(5, us.pick("maxw", int(BASE_STRAT["sizing"]["max_pair_weight"] * 100)))), 5,
+                            key="maxw")
+        tvol_ui = st.slider("목표 연변동성 (%)", 10, 80, min(80, max(10, us.pick("tvol", int(BASE_STRAT["sizing"]["target_vol"] * 100)))),
+                            5, key="tvol",
+                            help="레버리지 ETF 포지션이 계좌에 주는 변동성 한도. 높이면 변동성 큰 종목(SOXL 등)도 더 많이 삽니다.")
         neutral_mult = st.slider("중립 국면 비중 계수", 0.0, 1.0,
-                                 float(BASE_STRAT["regime_multiplier"]["NEUTRAL"]["long"]), 0.25, key="neu",
-                                 bind="query-params", help="일봉 국면이 중립일 때 비중에 곱하는 값 (1이면 줄이지 않음)")
-        use_vf = st.toggle("변동성 높을 때 비중 줄이기", value=True, key="vf", bind="query-params",
+                                 min(1.0, max(0.0, us.pick("neu", float(BASE_STRAT["regime_multiplier"]["NEUTRAL"]["long"])))),
+                                 0.25, key="neu", help="일봉 국면이 중립일 때 비중에 곱하는 값 (1이면 줄이지 않음)")
+        use_vf = st.toggle("변동성 높을 때 비중 줄이기", value=us.pick("vf", True), key="vf",
                            help="끄면 VIX·실현변동성이 높아도 비중을 줄이지 않습니다.")
-        sl_method = st.selectbox("손절 방식", list(SL_METHODS), format_func=SL_METHODS.get, key="sl",
-                                 bind="query-params")
-        tp_method = st.selectbox("익절 방식", list(TP_METHODS), format_func=TP_METHODS.get, key="tp",
-                                 bind="query-params")
-        tp_split = st.selectbox("익절 분할 (익절1 / 익절2 / 트레일링 잔량)", list(TP_SPLITS), key="split",
-                                bind="query-params",
+        sl_keys, tp_keys, split_keys = list(SL_METHODS), list(TP_METHODS), list(TP_SPLITS)
+        sl_method = st.selectbox("손절 방식", sl_keys, format_func=SL_METHODS.get, key="sl",
+                                 index=sl_keys.index(us.pick("sl", BASE_STRAT["levels"]["sl_method"], sl_keys)))
+        tp_method = st.selectbox("익절 방식", tp_keys, format_func=TP_METHODS.get, key="tp",
+                                 index=tp_keys.index(us.pick("tp", BASE_STRAT["levels"].get("tp_method", "r"), tp_keys)))
+        tp_split = st.selectbox("익절 분할 (익절1 / 익절2 / 트레일링 잔량)", split_keys, key="split",
+                                index=split_keys.index(us.pick("split", split_keys[0], split_keys)),
                                 help="익절1·익절2 에서 몇 %씩 팔지. 매매일지 → 통계의 '익절 분할 비교'로 내게 맞는 비율을 확인하세요.")
-        atr_mult = st.slider("ATR 배수 (ATR 손절)", 1.0, 4.0, float(BASE_STRAT["levels"]["atr_mult"]), 0.25,
-                             key="atr", bind="query-params")
-        pct_stop = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0, BASE_STRAT["levels"]["percent"] * 100, 0.5,
-                             key="pct", bind="query-params") / 100
-        st.caption("설정은 주소(URL)에 저장됩니다. 원하는 값으로 맞춘 뒤 홈 화면에 추가하면 다음에도 그대로 열립니다.")
+        atr_mult = st.slider("ATR 배수 (ATR 손절)", 1.0, 4.0,
+                             min(4.0, max(1.0, us.pick("atr", float(BASE_STRAT["levels"]["atr_mult"])))), 0.25, key="atr")
+        pct_ui = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0,
+                           min(10.0, max(1.0, us.pick("pct", BASE_STRAT["levels"]["percent"] * 100))), 0.5, key="pct")
+        us.save_if_changed({"mode": mode, "eq": equity, "risk": risk_ui, "maxw": maxw_ui, "tvol": tvol_ui,
+                            "neu": neutral_mult, "vf": use_vf, "sl": sl_method, "tp": tp_method, "split": tp_split,
+                            "atr": atr_mult, "pct": pct_ui})
+        risk_pct, max_pair, target_vol, pct_stop = risk_ui / 100, maxw_ui / 100, tvol_ui / 100, pct_ui / 100
+        st.caption(us.status_text())
         st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")
 
 strat = copy.deepcopy(BASE_STRAT)
@@ -236,8 +245,10 @@ def view_planner() -> None:
         ins_t = st.segmented_control(
             "매매 종목", tickers, key=f"ins_{pid}", required=True, persist_state="session",
             format_func=lambda t: f"{t} ({next(i for i in pair['instruments'] if i['ticker'] == t)['leverage']:+g}x)")
-        tf = st.segmented_control("손절·익절 기준 봉", ["1d", "1h"], key="tf", required=True, default="1d",
-                                  format_func=TF_LABEL.get, bind="query-params")
+        tf = st.segmented_control("손절·익절 기준 봉", ["1d", "1h"], key="tf", required=True,
+                                  default=us.pick("tf", "1d", ["1d", "1h"]), format_func=TF_LABEL.get,
+                                  persist_state="session")
+        us.save_if_changed({"tf": tf})
     ins = next(i for i in pair["instruments"] if i["ticker"] == ins_t)
     direction = 1 if ins["leverage"] > 0 else -1
     sig = a.signal

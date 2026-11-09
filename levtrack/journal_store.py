@@ -138,7 +138,7 @@ class GitHubStore:
         if self._sha is None:
             self.load()
         body = {
-            "message": f"journal: {len(trades)} trades",
+            "message": f"journal: update {self.path.rsplit('/', 1)[-1]}",
             "content": base64.b64encode(json.dumps(trades, ensure_ascii=False, indent=1).encode("utf-8")).decode(),
             "branch": self.branch,
         }
@@ -176,11 +176,12 @@ def token_problem(token: str) -> str | None:
     return None
 
 
-def make_store(secrets: dict | None, local_path: str | Path):
-    """st.secrets['journal'] 에 github_token 이 있으면 GitHubStore, 없으면 LocalStore."""
+def make_store(secrets: dict | None, local_path: str | Path, path: str | None = None):
+    """st.secrets['journal'] 에 github_token 이 있으면 GitHubStore, 없으면 LocalStore.
+    path 를 주면 같은 브랜치의 다른 파일(예: 설정 journal/settings.json)을 쓴다."""
     cfg = dict(secrets or {})
     token = clean_token(cfg.get("github_token"))
     if token:
         return GitHubStore(token, cfg.get("repo", "ysh030812-collab/stock"), cfg.get("branch", "journal-data"),
-                           cfg.get("path", "journal/trades.json"))
+                           path or cfg.get("path", "journal/trades.json"))
     return LocalStore(local_path)

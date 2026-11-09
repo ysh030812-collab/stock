@@ -264,3 +264,12 @@ def test_today_levels_short_ratchets_down():
     assert not changed and t["trail_u"] == 510
     # LETF 기준으로 적용 감시가는 현재 LETF 가격보다 아래 (매도 감시)
     assert lv["l_eff"] < lv["l_now"]
+
+
+def test_make_store_path_override_for_settings(tmp_path):
+    s = make_store({"github_token": "ghp_" + "F" * 36}, tmp_path / "s.json", path="journal/settings.json")
+    assert isinstance(s, GitHubStore) and s.path == "journal/settings.json" and s.branch == "journal-data"
+    gh = FakeGitHub()
+    s = GitHubStore("t", "o/r", "journal-data", "journal/settings.json", session=gh)
+    s.save({"risk": 2.0})
+    assert GitHubStore("t", "o/r", "journal-data", "journal/settings.json", session=gh).load() == {"risk": 2.0}
