@@ -1,0 +1,28 @@
+# 기초(신호용) ↔ 레버리지 ETF 매핑
+# leverage: 일일 목표 배수 (숏은 음수), expense: 연 총보수(대략값, 운용사 공시로 확인 권장)
+# vol_index: 변동성 계수에 쓸 변동성 지수 (yfinance 티커, 없으면 실현변동성만 사용)
+
+pairs:
+  - id: NDX
+    name: 나스닥100
+    signal: QQQ
+    vol_index: ^VXN
+    instruments:
+      - { ticker: TQQQ, leverage: 3, expense: 0.0084 }
+      - { ticker: SQQQ, leverage: -3, expense: 0.0095 }
+
+  - id: SEMI
+    name: 반도체
+    signal: SOXX          # 주의: SOXL/SOXS 추종지수와 SOXX 추종지수는 다름 → 추적오차 확인
+    vol_index: ^VIX
+    instruments:
+      - { ticker: SOXL, leverage: 3, expense: 0.0075 }
+      - { ticker: SOXS, leverage: -3, expense: 0.0097 }
+
+  - id: SPX
+    name: S&P500
+    signal: SPY
+    vol_index: ^VIX
+    instruments:
+      - { ticker: UPRO, leverage: 3, expense: 0.0091 }
+      - { ticker: SPXU, leverage: -3, expense: 0.0089 }

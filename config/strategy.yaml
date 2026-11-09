@@ -1,0 +1,53 @@
+# 지표 파라미터 (봉 개수 기준 — 일봉/시간봉 공통)
+indicators:
+  sma_fast: 50
+  sma_slow: 200
+  ema_fast: 20
+  ema_slow: 50
+  rsi: 14
+  atr: 14
+  macd: [12, 26, 9]
+  bollinger: [20, 2.0]
+  roc: 20
+  range_window: 252     # 52주(일봉) 고저 범위
+  donchian: 20
+  vol_window: 20        # 실현변동성 계산 창
+  vol_rank_window: 252  # 실현변동성 백분위 계산 창
+
+# 방향 점수 (bull / bear 각각 0~100)
+score:
+  regime_threshold: 65  # bull ≥ 65 → BULL, bear ≥ 65 → BEAR, 그 외 NEUTRAL
+
+# 변동성 계수 (0.25 ~ 1.0, 롱/숏 공통으로 비중에 곱함)
+volatility:
+  rank_start: 0.5       # 실현변동성 백분위가 이 값을 넘으면 감액 시작
+  vix_start: 20         # 변동성지수가 이 값을 넘으면 감액 시작
+  vix_full: 35          # 이 값에서 최대 감액
+  min_factor: 0.25
+
+# 국면별 비중 계수
+regime_multiplier:
+  BULL:    { long: 1.0, short: 0.0 }
+  NEUTRAL: { long: 0.5, short: 0.5 }
+  BEAR:    { long: 0.0, short: 1.0 }
+counter_trend_cap: 0.25   # SMA200 반대편 방향 진입 시 계수 상한
+
+# 손절 / 익절
+levels:
+  sl_method: atr          # atr | swing | percent | bollinger
+  atr_mult: 2.0
+  swing_lookback: 10
+  swing_buffer_atr: 0.25
+  percent: 0.03
+  r_multiples: [1.0, 2.0, 3.0]
+  tp_fractions: [0.33, 0.33]   # TP1, TP2 에서 청산할 비율 (나머지는 트레일링)
+  chandelier_n: 22
+  chandelier_mult: 3.0
+
+# 포지션 사이징
+sizing:
+  risk_pct: 0.01          # 1회 손절 시 계좌 손실 한도
+  target_vol: 0.20        # 포지션 목표 연변동성
+  max_pair_weight: 0.30   # 페어 하나당 최대 비중
+  max_total_weight: 0.60  # 레버리지 ETF 합산 최대 비중
+  gap_pct: 0.05           # 갭 시나리오: 기초가 손절 방향으로 5% 갭
