@@ -238,3 +238,76 @@ def _trade_stats(tr: pd.DataFrame) -> dict:
         out[f"{m} 횟수"] = int(len(g))
         out[f"{m} 합산 기여"] = float((1 + g).prod() - 1)
     return out
+
+
+# ------------------------------------------------------------------ 규칙 → 가격 (TP/SL 표시용)
+def rsi_target_price(close: pd.Series, n: int, target: float) -> float | None:
+    """내일 종가가 얼마면 RSI(n) 이 target 이 되는지 (Wilder RSI 역산). 해가 없으면 None."""
+    d = close.diff()
+    ag = d.clip(lower=0).ewm(alpha=1 / n, adjust=False, min_periods=n).mean().iloc[-1]
+    al = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False, min_periods=n).mean().iloc[-1]
+    c0 = float(close.iloc[-1])
+    if not (0 < target < 100) or np.isnan(ag) or np.isnan(al):
+        return None
+    rs = target / (100 - target)
+    # 상승(d>0):  (AG(n−1)+d) / (AL(n−1)) = RS
+    up = rs * al * (n - 1) - ag * (n - 1)
+    if up > 0:
+        return c0 + up
+    # 하락(d<0):  AG(n−1) / (AL(n−1) − d) = RS
+    dn = al * (n - 1) - ag * (n - 1) / rs
+    if dn < 0:
+        return c0 + dn
+    return c0
+
+
+def _bdays_after(day: pd.Timestamp, k: int) -> pd.Timestamp:
+    return pd.bdate_range(day, periods=k + 1)[-1]
+
+
+def levels(u: pd.DataFrame, td: dict, p: dict | None = None, emergency_sigma: float = 4.0) -> dict:
+    """현재 상태의 손절·익절·시간청산·비상손절과 (현금일 때) 다음 진입 가격 — 모두 기초 가격.
+
+    kind: '종가' = 그날 종가로 판단(알림 후 다음 날 실행), '장중' = 장중 지정가/감시가로 걸 수 있음
+    """
+    p = {**DEFAULTS, **(p or {})}
+    c = u["Close"]
+    sd = float(c.pct_change().iloc[-20:].std())
+    close = td["close"]
+    rows: list[dict] = []
+    mode = td["mode"]
+    if mode == "TREND":
+        rows.append({"구분": "손절", "가격": td["dn_band"], "기준": "종가",
+                     "설명": f"종가가 200일선 −{p['buf']:.0%} 아래면 청산 (200일선이 오르면 함께 올라가는 추격 손절)"})
+        rows.append({"구분": "익절", "가격": None, "기준": "-", "설명": "없음 — 추세가 꺾일 때까지 보유"})
+    elif mode == "BOUNCE":
+        tp = rsi_target_price(c, p["rsi_n"], p["bounce_exit"])
+        tp = max(tp, close) if tp is not None else None  # 이미 넘었으면 현재가 (오늘 종가로 청산 조건 충족)
+        rows.append({"구분": "익절", "가격": tp, "기준": "장중",
+                     "설명": f"이 가격 이상이면 RSI({p['rsi_n']}) > {p['bounce_exit']} → 청산 (매일 재계산)"})
+        left = max(0, p["bounce_hold"] - td["days_in"])
+        rows.append({"구분": "시간 청산", "가격": None, "기준": "종가",
+                     "설명": f"{p['bounce_hold']}거래일째 종가에 청산 · 약 {_bdays_after(td['date'], left).date()} ({left}거래일 남음)"})
+        rows.append({"구분": "비상 손절(선택)", "가격": close * (1 - emergency_sigma * sd), "기준": "장중",
+                     "설명": f"규칙에는 없음. 넣으면 백테스트상 연 0~1.5%p 낮아짐 (−{emergency_sigma:g}σ)"})
+    elif mode == "SHORT":
+        tp = rsi_target_price(c, p["rsi_n"], p["short_exit"])
+        tp = min(tp, close) if tp is not None else None
+        rows.append({"구분": "익절", "가격": tp, "기준": "장중",
+                     "설명": f"이 가격 이하면 RSI({p['rsi_n']}) < {p['short_exit']} → 청산 (매일 재계산)"})
+        rows.append({"구분": "손절", "가격": td["sma"], "기준": "종가", "설명": "종가가 200일선 위로 올라오면 하락 조건 해제 → 청산"})
+        left = max(0, p["short_hold"] - td["days_in"])
+        rows.append({"구분": "시간 청산", "가격": None, "기준": "종가",
+                     "설명": f"{p['short_hold']}거래일째 종가에 청산 · 약 {_bdays_after(td['date'], left).date()} ({left}거래일 남음)"})
+        rows.append({"구분": "비상 손절(선택)", "가격": close * (1 + emergency_sigma * sd), "기준": "장중",
+                     "설명": f"규칙에는 없음. 넣으면 백테스트상 연 0~1.5%p 낮아짐 (+{emergency_sigma:g}σ)"})
+    else:  # 현금: 다음 진입 가격
+        rows.append({"구분": "추세 롱 진입", "가격": td["up_band"], "기준": "종가",
+                     "설명": f"종가가 이 가격(200일선 +{p['buf']:.0%}) 위면 다음 날 3배 롱"})
+        if close < td["sma"]:
+            rows.append({"구분": "과매도 롱 진입", "가격": rsi_target_price(c, p["rsi_n"], p["bounce_entry"]), "기준": "종가",
+                         "설명": f"종가가 이 가격 이하면 RSI({p['rsi_n']}) < {p['bounce_entry']} → 다음 날 3배 롱(절반)"})
+            if float(u["Close"].rolling(50).mean().iloc[-1]) < td["sma"]:
+                rows.append({"구분": "반등 숏 진입", "가격": rsi_target_price(c, p["rsi_n"], p["short_entry"]), "기준": "종가",
+                             "설명": f"종가가 이 가격 이상이면 RSI({p['rsi_n']}) > {p['short_entry']} → 다음 날 3배 숏"})
+    return {"rows": rows, "sigma_daily": sd}

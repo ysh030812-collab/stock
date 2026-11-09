@@ -11,6 +11,7 @@ from plotly.subplots import make_subplots
 
 from levtrack import journal as J
 from levtrack import trend as TR
+from levtrack.leverage import convert_price
 
 ss = st.session_state
 MODE_CLS = {"TREND": "lt-bull", "BOUNCE": "lt-neutral", "SHORT": "lt-bear", "CASH": "lt-sub"}
@@ -34,6 +35,39 @@ def _held(trades: list[dict], pair_id: str) -> dict[str, int]:
         if t["pair_id"] == pair_id and not J.is_closed(t):
             out[t["ticker"]] = out.get(t["ticker"], 0) + J.remaining_shares(t)
     return out
+
+
+def level_table(md, pair: dict, td: dict, u: pd.DataFrame, p: dict) -> pd.DataFrame:
+    """현재 상태의 익절·손절(또는 현금일 때 진입) 가격 — 기초 가격과 3배 ETF 환산가, MTS 주문 방식."""
+    lv = TR.levels(u, td, p)
+    rows = []
+    for r in lv["rows"]:
+        name = r["구분"]
+        if "진입" in name:
+            side = -1 if "숏" in name else 1
+        else:
+            side = td["side"] or 1
+        ins = _ins(pair, side)
+        l_now = md.last(ins["ticker"]) if ins else None
+        lp = convert_price(td["close"], r["가격"], l_now, ins["leverage"]) if (ins and r["가격"]) else None
+        if "진입" in name:
+            how = "종가 확인 → 다음 날 매수"
+        elif r["가격"] is None:
+            how = "-" if name == "익절" else "종가 확인 → 다음 날 매도"
+        elif r["기준"] == "종가":
+            how = "종가 알림 → 다음 날 매도"
+        elif lp is not None and l_now is not None and lp > l_now:
+            how = "지정가 매도"
+        else:
+            how = "감시가(스탑) 매도"
+        rows.append({"구분": name, pair["signal"]: r["가격"], "3배 ETF": ins["ticker"] if ins else "-",
+                     "ETF 환산가": lp, "주문": how, "설명": r["설명"]})
+    return pd.DataFrame(rows)
+
+
+def _fmt_levels(df: pd.DataFrame):
+    num = {c: "{:,.2f}" for c in (df.columns[1], "ETF 환산가") if c in df}
+    return df.style.format(num, na_rep="-")
 
 
 def _badge(text: str, cls: str) -> str:
@@ -67,8 +101,16 @@ def dashboard(md, pairs: list[dict], p: dict, equity: float, go_plan) -> None:
                                   delta_arrow="off", width=140)
                     else:
                         st.metric("목표", "현금", "보유 없음", delta_color="off", delta_arrow="off", width=140)
-                st.markdown('<div class="lt-sub">' + f"RSI(2) {td['rsi2']:.0f} · 20일 변동성 {td['rv']:.0%}<br>"
-                            + "<br>".join("· " + x for x in td["triggers"]) + "</div>", unsafe_allow_html=True)
+                try:
+                    lt = level_table(md, pair, td, md.ohlc(pair["signal"], "1d"), p)
+                    lines = [f"<b>{r['구분']}</b> {r[pair['signal']]:,.2f}"
+                             + (f" ({r['3배 ETF']} {r['ETF 환산가']:,.2f})" if pd.notna(r["ETF 환산가"]) else "")
+                             if pd.notna(r[pair['signal']]) else f"<b>{r['구분']}</b> {r['설명'][:24]}"
+                             for _, r in lt.iterrows() if "선택" not in r["구분"]]
+                except Exception:  # noqa: BLE001
+                    lines = []
+                st.markdown('<div class="lt-sub">' + "<br>".join(lines)
+                            + f"<br>RSI(2) {td['rsi2']:.0f} · 20일 변동성 {td['rv']:.0%}</div>", unsafe_allow_html=True)
                 st.button("주문 보기 →", key=f"tgo_{pair['id']}", type="primary", width="stretch",
                           on_click=go_plan, args=(pair["id"], ins["ticker"] if ins else pair["instruments"][0]["ticker"]))
 
@@ -131,7 +173,16 @@ def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict
     else:
         st.info("주문할 것이 없습니다 — " + ("목표대로 보유 중입니다." if ins else "현금 유지."))
     st.caption("신호는 종가로 확정되므로, 한국 시간 아침에 확인하고 그날 밤 미국장 개장 직후 실행하면 됩니다. "
-               "비중 차이가 작으면(10%p 이하) 조정하지 않습니다. 이 전략은 손절가 대신 **신호 청산**으로 빠집니다.")
+               "비중 차이가 작으면(10%p 이하) 조정하지 않습니다.")
+
+    st.markdown("##### 🎯 " + ("익절 · 손절 (오늘 기준)" if td["mode"] != "CASH" else "다음 진입 가격"))
+    try:
+        st.table(_fmt_levels(level_table(md, pair, td, u, p)), hide_index=True)
+    except Exception as e:  # noqa: BLE001
+        st.caption(f"가격 계산 실패: {e}")
+    st.caption("모든 가격은 전략 규칙을 오늘 기준 가격으로 바꾼 값이라 **매일 다시 확인**하세요. "
+               "'종가' 기준 항목은 장중에 잠깐 닿아도 청산하지 않습니다 — 종가로 확인 후 다음 날 실행. "
+               "익절(RSI) 가격은 장중 지정가로 걸어도 됩니다. 비상 손절은 규칙에 없는 선택 사항입니다.")
 
     if ins and target_n > 0:
         _record_form(pair, ins, td, px, target_n, fx, save_fn)

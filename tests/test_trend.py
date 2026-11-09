@@ -74,3 +74,29 @@ def test_backtest_no_lookahead(demo):
 def test_long_only_variant(demo):
     lo = T.backtest(demo, PAIRS[0], {"trend_ls": {"short_entry": 1e9}})
     assert (lo.trades["방향"] == "롱").all()
+
+
+def test_levels_for_each_mode():
+    up = frame(100 * np.exp(np.linspace(0, 0.6, 300)))
+    td = T.today(up)
+    rows = {r["구분"]: r for r in T.levels(up, td)["rows"]}
+    assert td["mode"] == "TREND" and rows["손절"]["가격"] == pytest.approx(td["dn_band"]) and rows["익절"]["가격"] is None
+    # 현금 상태: 진입 가격 제시
+    cash = dict(td, mode="CASH", side=0)
+    names = [r["구분"] for r in T.levels(up, cash)["rows"]]
+    assert names[0] == "추세 롱 진입"
+    # 과매도 롱 / 반등 숏: RSI 역산 익절가가 현재가의 올바른 쪽
+    for mode, side in (("BOUNCE", 1), ("SHORT", -1)):
+        st = dict(td, mode=mode, side=side, days_in=1)
+        r = {x["구분"]: x for x in T.levels(up, st)["rows"]}
+        tp = r["익절"]["가격"]
+        assert (tp - td["close"]) * side > -1e-9
+        assert "비상 손절(선택)" in r and "시간 청산" in r
+
+
+def test_rsi_target_price_roundtrip():
+    from levtrack.indicators import rsi
+    c = pd.Series(100 * np.exp(np.cumsum(np.random.default_rng(1).normal(0, 0.01, 300))))
+    for tgt in (10, 30, 70, 90):
+        p = T.rsi_target_price(c, 2, tgt)
+        assert rsi(pd.concat([c, pd.Series([p])], ignore_index=True), 2).iloc[-1] == pytest.approx(tgt, abs=1e-6)

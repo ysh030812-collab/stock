@@ -161,6 +161,14 @@ def _trend_status(t: dict, md, strat) -> None:
     want = {"TREND": 1, "BOUNCE": 1, "SHORT": -1}.get(td["mode"], 0)
     if want == t["direction"]:
         st.success(f"계속 보유 — 오늘 신호 {td['label']} (목표 비중 {td['weight']:.0%})", icon="✅")
+        try:
+            from levtrack.config import load_pairs
+            from ui_trend import _fmt_levels, level_table
+
+            pair = next(x for x in load_pairs() if x["id"] == t["pair_id"])
+            st.table(_fmt_levels(level_table(md, pair, td, u, TR.params(strat))), hide_index=True)
+        except Exception as e:  # noqa: BLE001
+            st.caption(f"익절·손절 계산 실패: {e}")
     else:
         st.error(f"**청산 신호** — 오늘 신호 {td['label']}. 다음 거래일에 {t['ticker']} 를 매도하세요.", icon="🔔")
     st.caption(" · ".join(td["triggers"]))
