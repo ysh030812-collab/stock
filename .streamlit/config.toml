@@ -1,0 +1,6 @@
+[server]
+# app/static/ 폴더를 /app/static/ 경로로 서빙 (홈 화면 아이콘용)
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false

@@ -14,6 +14,18 @@ streamlit run app/streamlit_app.py # 브라우저에서 http://localhost:8501
 - 왼쪽 메뉴의 **데이터**에서 `실시세 (yfinance)`를 고르면 Yahoo Finance 무료 시세를 받습니다 (인터넷 필요, 15분 캐시).
 - `데모`는 오프라인에서 화면과 계산 흐름을 확인하는 합성 데이터입니다. 실제 가격이 아닙니다.
 
+## 태블릿에서 쓰기 (Streamlit Community Cloud, 무료)
+
+1. [share.streamlit.io](https://share.streamlit.io) 에 GitHub 계정으로 로그인 → **Create app**
+2. Repository `ysh030812-collab/stock`, Branch `claude/bold-hopper-02xh9x`, Main file `app/streamlit_app.py` → **Deploy**
+3. 배포가 끝나면 태블릿에서 `https://<앱이름>.streamlit.app` 열기
+4. 홈 화면에 추가
+   - **iPad (Safari)**: 공유 버튼 → *홈 화면에 추가*
+   - **안드로이드 (Chrome)**: ⋮ 메뉴 → *홈 화면에 추가*
+   - 앱 화면이 다 뜬 뒤(대시보드 표가 보인 뒤) 추가해야 LevTrack 아이콘이 잡힙니다.
+
+아이콘은 `app/static/icon-*.png` 이고 `python tools/make_icon.py` 로 다시 만들 수 있습니다. 아이콘을 바꾸면 `app/home_icon.py` 의 `ICON_VERSION` 을 올리고, 홈 화면 아이콘을 지웠다가 다시 추가하세요.
+
 ## 화면
 
 | 탭 | 내용 |

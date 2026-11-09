@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import copy  # noqa: E402
 
@@ -25,8 +26,11 @@ from levtrack.patterns import (PATTERNS, candle_patterns, find_divergences, rece
                                recent_patterns)
 from levtrack.planner import build_plan, sigma_daily_from  # noqa: E402
 from levtrack.structure import fibonacci, volume_profile  # noqa: E402
+from home_icon import inject_home_icon  # noqa: E402
 
-st.set_page_config(page_title="LevTrack", page_icon="📈", layout="wide")
+STATIC = Path(__file__).resolve().parent / "static"
+st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide")
+inject_home_icon("LevTrack")
 
 PAIRS = load_pairs()
 PAIR_BY_ID = {p["id"]: p for p in PAIRS}
