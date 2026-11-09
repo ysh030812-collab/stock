@@ -1,0 +1,14 @@
+{
+ "mode": "yahoo",
+ "eq": 10000.0,
+ "risk": 1.0,
+ "maxw": 30,
+ "tvol": 20,
+ "neu": 0.5,
+ "vf": true,
+ "sl": "atr",
+ "tp": "r",
+ "split": "균형 33/33/34",
+ "atr": 2.0,
+ "pct": 3.0
+}
