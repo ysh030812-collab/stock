@@ -91,7 +91,7 @@ def _exit_box(t: dict, cur: float | None, lv: dict | None = None) -> None:
     rem = J.remaining_shares(t)
     p = t["plan"]
     with st.expander("청산 기록"):
-        trend_trade = t.get("strategy") == "trend"
+        trend_trade = t.get("strategy") in ("trend", "dant")
         reasons = ["신호 청산", "손절", "수동"] if trend_trade else [r for r in J.EXIT_REASONS if r != "신호 청산"]
         reason = st.segmented_control("사유", reasons, key=f"rsn_{t['id']}", required=True, default=reasons[0])
         f1, f2 = p.get("tp_fractions", [0.33, 0.33])
@@ -131,7 +131,7 @@ def _levels_for(t: dict, md, frame_fn, strat) -> tuple[dict | None, bool]:
     """오늘 기준 손절·트레일·익절 가격 계산 (데이터를 못 받으면 None)."""
     from levtrack.levels import chandelier
 
-    if t.get("strategy") == "trend":
+    if t.get("strategy") in ("trend", "dant"):
         return None, False
     try:
         u_now, l_now = md.last(t["signal"]), md.last(t["ticker"])
@@ -149,29 +149,38 @@ def _levels_for(t: dict, md, frame_fn, strat) -> tuple[dict | None, bool]:
 
 
 def _trend_status(t: dict, md, strat) -> None:
-    """추세 롱숏 거래: 오늘 신호가 이 거래를 계속 보유하라는지 확인."""
-    from levtrack import trend as TR
+    """신호 청산형 거래(단타 · 추세): 오늘 신호가 이 거래를 계속 보유하라는지 확인하고 익절·손절 가격 표시."""
+    from levtrack.config import load_pairs
 
     try:
         u = md.ohlc(t["signal"], "1d")
-        td = TR.today(u, TR.params(strat))
+        if t.get("strategy") == "dant":
+            from levtrack import dant as D
+
+            td = D.today(u, D.params(strat))
+            notes = [f"RSI(2) {td['rsi2']:.0f}", f"{td['days_in']}거래일째" if td["mode"] != "CASH" else "신호 종료"]
+        else:
+            from levtrack import trend as TR
+
+            td = TR.today(u, TR.params(strat))
+            notes = td["triggers"]
     except Exception as e:  # noqa: BLE001
         st.caption(f"신호 확인 실패: {e}")
         return
-    want = {"TREND": 1, "BOUNCE": 1, "SHORT": -1}.get(td["mode"], 0)
+    want = td["side"]
     if want == t["direction"]:
         st.success(f"계속 보유 — 오늘 신호 {td['label']} (목표 비중 {td['weight']:.0%})", icon="✅")
-        try:
-            from levtrack.config import load_pairs
-            from ui_trend import _fmt_levels, level_table
+        if t.get("strategy") == "dant":
+            try:
+                from ui_dant import _fmt, level_table
 
-            pair = next(x for x in load_pairs() if x["id"] == t["pair_id"])
-            st.table(_fmt_levels(level_table(md, pair, td, u, TR.params(strat))), hide_index=True)
-        except Exception as e:  # noqa: BLE001
-            st.caption(f"익절·손절 계산 실패: {e}")
+                pair = next(x for x in load_pairs() if x["id"] == t["pair_id"])
+                st.table(_fmt(level_table(md, pair, td)), hide_index=True)
+            except Exception as e:  # noqa: BLE001
+                st.caption(f"익절·손절 계산 실패: {e}")
     else:
         st.error(f"**청산 신호** — 오늘 신호 {td['label']}. 다음 거래일에 {t['ticker']} 를 매도하세요.", icon="🔔")
-    st.caption(" · ".join(td["triggers"]))
+    st.caption(" · ".join(notes))
 
 
 def _today_table(t: dict, lv: dict) -> None:
@@ -248,7 +257,7 @@ def view(md, fx, frame_fn=None, strat=None) -> None:
                               delta_color="off", delta_arrow="off", border=True, width=150)
                 if lv:
                     _today_table(t, lv)
-                if t.get("strategy") == "trend":
+                if t.get("strategy") in ("trend", "dant"):
                     _trend_status(t, md, strat)
                     st.markdown(f'<div class="lt-sub">청산 규칙: {p.get("exit_rule", "-")}'
                                 + (f"<br>메모: {t['note']}" if t.get("note") else "") + "</div>", unsafe_allow_html=True)

@@ -149,6 +149,14 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
     """
     p = params(strat)
     s = signals(u, p)
+    return simulate(u, s, pair, rebalance_band=p["rebalance_band"], warm=p["ma"] + 5, modes=MODES, equity0=equity0,
+                    start=start, cost_bps=cost_bps, execution=execution, rf=rf, borrow_spread=borrow_spread)
+
+
+def simulate(u: pd.DataFrame, s: pd.DataFrame, pair: dict, *, rebalance_band: float, warm: int, modes: dict,
+             equity0: float = 10_000.0, start: str | None = None, cost_bps: float = 10.0,
+             execution: str = "next_open", rf: pd.Series | None = None, borrow_spread: float = 0.005) -> BTResult:
+    """신호 표(s: side·weight·mode·sma)로 합성 3배 ETF 계좌를 시뮬레이션 (추세 롱숏·단타 공용 엔진)."""
     long_ins = next((i for i in pair["instruments"] if i["leverage"] == 3), pair["instruments"][0])
     short_ins = next((i for i in pair["instruments"] if i["leverage"] == -3), None)
     C_ = u["Close"].to_numpy()
@@ -163,7 +171,6 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
     if short_ins is None:
         tw = np.where(side < 0, 0.0, tw)
     n = len(s)
-    warm = p["ma"] + 5
     i0 = max(warm, int(s.index.searchsorted(pd.Timestamp(start)))) if start else warm
     cost = cost_bps / 10_000
     eq = np.empty(n - i0)
@@ -214,7 +221,7 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
         expo[j] = w_cur * 3 * side_cur
         # 오늘 종가 신호 → 내일 포지션
         tgt_side, tgt_w = int(side[i]), float(tw[i])
-        if tgt_side != side_cur or (tgt_side != 0 and abs(tgt_w - w_cur) > p["rebalance_band"]):
+        if tgt_side != side_cur or (tgt_side != 0 and abs(tgt_w - w_cur) > rebalance_band):
             change = abs(tgt_w - w_cur) if tgt_side == side_cur else w_cur + tgt_w
             if execution == "next_open" and i < n - 1:
                 pend = (tgt_side, tgt_w, change, s["mode"].iloc[i])
@@ -242,7 +249,7 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
     dates = s.index[i0:]
     equity = pd.Series(eq, index=dates, name="전략")
     tr = pd.DataFrame([{
-        "진입일": t["entry"], "청산일": t["exit"], "모드": MODES[t["mode"]],
+        "진입일": t["entry"], "청산일": t["exit"], "모드": modes[t["mode"]],
         "방향": "숏" if t["mode"] == "SHORT" else "롱",
         "종목": (short_ins if t["mode"] == "SHORT" else long_ins)["ticker"],
         "계좌 기여": t["exit_eq"] / t["entry_eq"] - 1, "보유일": (t["exit"] - t["entry"]).days,
