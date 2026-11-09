@@ -13,6 +13,6 @@
  "pct": 10.0,
  "strategy": "trend",
  "tl_vt": 40,
- "mr_on": true,
+ "mr_on": false,
  "mrg": true
 }
