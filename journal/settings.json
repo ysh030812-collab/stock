@@ -1,7 +1,7 @@
 {
  "mode": "yahoo",
  "eq": 10000.0,
- "risk": 1.0,
+ "risk": 3.0,
  "maxw": 30,
  "tvol": 20,
  "neu": 0.5,
