@@ -25,12 +25,14 @@ from levtrack.patterns import candle_patterns, recent_divergences, recent_patter
 from levtrack.planner import build_plan, sigma_daily_from  # noqa: E402
 from ui_chart import OVERLAYS, PANELS, PERIODS, build_chart  # noqa: E402
 from ui_style import apply_style  # noqa: E402
+import ui_journal as uj  # noqa: E402
+from levtrack.journal import TP_SPLITS  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 태블릿 UI"
+APP_VERSION = "2026.11.09 매매일지"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -50,7 +52,7 @@ BASE_STRAT = load_strategy()
 REGIME = {"BULL": ("🟢 상승", "lt-bull"), "NEUTRAL": ("🟡 중립", "lt-neutral"), "BEAR": ("🔴 하락", "lt-bear")}
 TF_LABEL = {"1d": "일봉", "1h": "시간봉"}
 CAT_LABEL = {"trend": "추세", "momentum": "모멘텀", "structure": "구조", "volume": "거래량", "rs": "상대강도"}
-VIEWS = ["📊 대시보드", "📋 플래너", "🧮 계산기", "📉 추적오차"]
+VIEWS = ["📊 대시보드", "📋 플래너", "📒 일지", "🧮 계산기", "📉 추적오차"]
 
 ss = st.session_state
 ss.setdefault("view", VIEWS[0])
@@ -97,6 +99,9 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
                                  bind="query-params")
         tp_method = st.selectbox("익절 방식", list(TP_METHODS), format_func=TP_METHODS.get, key="tp",
                                  bind="query-params")
+        tp_split = st.selectbox("익절 분할 (익절1 / 익절2 / 트레일링 잔량)", list(TP_SPLITS), key="split",
+                                bind="query-params",
+                                help="익절1·익절2 에서 몇 %씩 팔지. 매매일지 → 통계의 '익절 분할 비교'로 내게 맞는 비율을 확인하세요.")
         atr_mult = st.slider("ATR 배수 (ATR 손절)", 1.0, 4.0, float(BASE_STRAT["levels"]["atr_mult"]), 0.25,
                              key="atr", bind="query-params")
         pct_stop = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0, BASE_STRAT["levels"]["percent"] * 100, 0.5,
@@ -107,7 +112,8 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
 strat = copy.deepcopy(BASE_STRAT)
 strat["sizing"].update(risk_pct=risk_pct, max_pair_weight=max_pair, target_vol=target_vol)
 strat["regime_multiplier"]["NEUTRAL"] = {"long": neutral_mult, "short": neutral_mult}
-strat["levels"].update(sl_method=sl_method, tp_method=tp_method, atr_mult=atr_mult, percent=pct_stop)
+strat["levels"].update(sl_method=sl_method, tp_method=tp_method, atr_mult=atr_mult, percent=pct_stop,
+                       tp_fractions=TP_SPLITS[tp_split])
 
 
 @st.cache_resource(ttl=900, show_spinner="시세 불러오는 중…")
@@ -280,6 +286,7 @@ def view_planner() -> None:
     st.markdown("##### 📝 메리츠증권 주문표")
     st.table(plan.order_sheet(), hide_index=True)
     st.caption("LETF 기준 가격은 매일 리셋되므로 장 시작 전 다시 확인하세요. 감시 주문이 안 되면 기초 가격 기준으로 수동 매도합니다.")
+    uj.entry_form(plan, pair_id=pid, signal=sig, timing=timing, timeframe=tf, fx=fx)
 
     # ---- 차트
     periods = PERIODS[tf]
@@ -378,5 +385,6 @@ def view_tracking() -> None:
     st.caption("SOXX 와 SOXL/SOXS 는 추종 지수가 달라 괴리가 상대적으로 큽니다.")
 
 
-{VIEWS[0]: view_dashboard, VIEWS[1]: view_planner, VIEWS[2]: view_calc, VIEWS[3]: view_tracking}[ss["view"]]()
+{VIEWS[0]: view_dashboard, VIEWS[1]: view_planner, VIEWS[2]: lambda: uj.view(md, fx), VIEWS[3]: view_calc,
+ VIEWS[4]: view_tracking}[ss["view"]]()
 st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")

@@ -34,6 +34,26 @@ streamlit run app/streamlit_app.py # 브라우저에서 http://localhost:8501
 
 아이콘은 `app/static/icon-*.png` 이고 `python tools/make_icon.py` 로 다시 만들 수 있습니다. 아이콘을 바꾸면 `app/home_icon.py` 의 `ICON_VERSION` 을 올리고, 홈 화면 아이콘을 지웠다가 다시 추가하세요.
 
+## 매매일지 저장 (GitHub, 무료)
+
+Streamlit Cloud 는 서버 파일이 재시작 때 지워지므로, 일지는 이 저장소의 **`journal-data` 브랜치**에 저장하는 것을 권장합니다
+(앱이 배포된 브랜치와 달라서 저장해도 앱이 재배포되지 않습니다).
+
+1. GitHub → Settings → Developer settings → **Fine-grained personal access tokens** → *Generate new token*
+   - Repository access: **Only select repositories** → `ysh030812-collab/stock`
+   - Permissions → Repository permissions → **Contents: Read and write**
+2. share.streamlit.io → 앱 ⋮ → **Settings → Secrets** 에 붙여넣고 저장
+   ```toml
+   [journal]
+   github_token = "github_pat_여기에_토큰"
+   repo = "ysh030812-collab/stock"
+   branch = "journal-data"
+   ```
+3. 앱의 📒 일지 화면 상단이 "저장 위치: GitHub …" 로 바뀌면 완료. 첫 저장 때 `journal-data` 브랜치가 자동으로 만들어집니다.
+
+설정 전에는 서버 파일에 저장되니, 일지 → **백업**에서 JSON 을 받아 두세요 (같은 화면에서 다시 불러올 수 있음).
+내 PC 에서 실행할 때는 `data/journal.json` 에 저장됩니다.
+
 ## 화면
 
 | 탭 | 내용 |
@@ -42,6 +62,7 @@ streamlit run app/streamlit_app.py # 브라우저에서 http://localhost:8501
 | 차트 · 플래너 | 기초/LETF 2단 차트에 진입·손절·익절·트레일링 레벨, 진입 비율 계산, **메리츠증권 주문표** |
 | 환산 계산기 | 기초 목표가 → LETF 가격 (당일 환산 / 보유일·변동성별 감쇠 반영) |
 | 추적오차 | LETF 실제 수익률과 k × 기초 수익률의 괴리, 실효 배수 |
+| 매매일지 | 진입·분할 청산 기록, 보유 포지션 평가손익·R, 통계(승률·평균 R·손익비), 익절 분할 비교, 조건별 성과, 연도별 손익·양도세 추정, 백업 |
 
 ## 반영된 기술적 분석
 
