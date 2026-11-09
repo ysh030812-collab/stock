@@ -14,5 +14,10 @@
  "strategy": "trend",
  "tl_vt": 40,
  "mr_on": false,
- "mrg": true
+ "mrg": true,
+ "d_vt": 40,
+ "d_dip": true,
+ "d_bounce": true,
+ "d_short": true,
+ "d_gate": true
 }
