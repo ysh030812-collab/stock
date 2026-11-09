@@ -57,8 +57,10 @@ class GitHubStore:
     def label(self) -> str:
         return f"GitHub {self.repo} · {self.branch} 브랜치"
 
-    def _url(self, p: str) -> str:
-        return f"{API}/repos/{self.repo}/{p}"
+    def _url(self, p: str = "") -> str:
+        # GitHub API 는 끝에 '/' 가 붙으면 404 를 낸다 → 저장소 자체 조회는 슬래시 없이
+        base = f"{API}/repos/{self.repo}"
+        return f"{base}/{p}" if p else base
 
     def _check(self, r, what: str):
         if r.status_code >= 400:

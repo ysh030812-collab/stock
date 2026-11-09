@@ -117,7 +117,9 @@ class FakeGitHub:
         self.headers, self.branches, self.files, self.n = {}, {"main": "abc"}, {}, 0
 
     def get(self, url, params=None):
-        if url.endswith("/repos/o/r/"):
+        if url.endswith("/"):  # 실제 GitHub 처럼 끝 슬래시는 404
+            return FakeResp(404, {"message": "Not Found"})
+        if url.endswith("/repos/o/r"):
             return FakeResp(200, {"default_branch": "main"})
         if "/git/ref/heads/" in url:
             b = url.rsplit("/", 1)[1]
@@ -224,7 +226,7 @@ def test_diagnose_classic_token_without_repo_scope():
         def get(self, url, params=None):
             if url.endswith("/user"):
                 return FakeResp(200, {"login": "me"}, {"X-OAuth-Scopes": "public_repo, read:user"})
-            if url.endswith("/repos/o/r/"):
+            if url.endswith("/repos/o/r"):
                 return FakeResp(404, {"message": "Not Found"})
             return super().get(url, params)
 
