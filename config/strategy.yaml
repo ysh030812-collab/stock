@@ -13,10 +13,41 @@ indicators:
   donchian: 20
   vol_window: 20        # 실현변동성 계산 창
   vol_rank_window: 252  # 실현변동성 백분위 계산 창
+  obv_ema: 20           # OBV 추세선
+  vol_avg: 20           # 거래량 평균 (거래량 비율, 상승봉 거래량 비중)
+  rs_sma: 50            # 상대강도 추세선
+  rs_roc: 20            # 상대강도 변화율 기간
 
 # 방향 점수 (bull / bear 각각 0~100)
+# 배점: 추세 40, 모멘텀 25, 구조 15, 거래량 10, 상대강도 10 (없는 항목은 제외하고 100점 환산)
 score:
   regime_threshold: 65  # bull ≥ 65 → BULL, bear ≥ 65 → BEAR, 그 외 NEUTRAL
+
+# 정규 다이버전스 (RSI, MACD 히스토그램)
+divergence:
+  pivot_left: 3
+  pivot_right: 3        # 피벗 확정에 필요한 봉 수 (그만큼 늦게 확인됨)
+  lookback: 60
+  min_gap: 5            # 두 피벗 사이 최소 봉 간격
+  max_age: 10           # 이 봉 수 이내에 발생한 것만 반영
+  points: 5             # 다이버전스 1건당 해당 방향 +점, 반대 방향 −점
+
+# 지지/저항 구조
+structure:
+  fib_lookback: 120     # 피보나치 스윙 탐색 구간
+  vp_bars: 120          # 매물대(볼륨 프로파일) 계산 구간
+  vp_bins: 40
+  value_area: 0.70
+  swing_pivot: 5        # 스윙 고저점 피벗 좌우 봉 수
+
+# 하위 봉(시간봉) 진입 타이밍
+timing:
+  interval: 1h
+  pullback_lookback: 8  # 최근 n봉 안에 눌림(EMA20 터치 또는 RSI 되돌림)이 있었는지
+  rsi_pullback: 45      # 롱: RSI < 45 를 눌림으로 봄 (숏은 > 55)
+  overheat_rsi: 75      # 롱: RSI > 75 면 과열 (숏은 < 25)
+  overheat_atr: 2.0     # EMA20 에서 ATR×2 이상 벌어지면 과열
+  breakout_vol: 1.5     # 돌파 인정에 필요한 거래량 비율
 
 # 변동성 계수 (0.25 ~ 1.0, 롱/숏 공통으로 비중에 곱함)
 volatility:
@@ -34,11 +65,14 @@ counter_trend_cap: 0.25   # SMA200 반대편 방향 진입 시 계수 상한
 
 # 손절 / 익절
 levels:
-  sl_method: atr          # atr | swing | percent | bollinger
+  sl_method: atr          # atr | swing | percent | bollinger | support
   atr_mult: 2.0
   swing_lookback: 10
   swing_buffer_atr: 0.25
   percent: 0.03
+  tp_method: r            # r | fib | resistance
+  tp_min_r: 1.0           # 구조 기반 익절의 최소 거리 (R)
+  support_min_atr: 0.5    # 지지대 손절: 진입가에서 최소 ATR×0.5 떨어진 레벨
   r_multiples: [1.0, 2.0, 3.0]
   tp_fractions: [0.33, 0.33]   # TP1, TP2 에서 청산할 비율 (나머지는 트레일링)
   chandelier_n: 22

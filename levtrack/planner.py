@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from . import leverage as lev
-from .levels import chandelier, stop_loss, take_profits
+from .levels import chandelier, stop_loss, take_profit_levels
+from .structure import key_levels
 from .sizing import Sizing, size_position, split_shares
 
 
@@ -34,6 +35,9 @@ class TradePlan:
     gap_l: float
     gap_loss: float
     expense: float = 0.0
+    tp_method: str = "r"
+    tp_labels: list[str] = field(default_factory=list)
+    key_levels: pd.DataFrame | None = None
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -44,8 +48,9 @@ class TradePlan:
         rows = [("진입", self.u_entry, self.l_entry, 0.0)]
         rows.append(("손절", self.u_stop, self.l_stop, -1.0))
         for i, (u, l, r) in enumerate(zip(self.u_tps, self.l_tps, self.r_multiples), 1):
-            rows.append((f"익절{i}", u, l, r))
-        rows.append(("트레일링", self.u_trail, self.l_trail, None))
+            tag = self.tp_labels[i - 1] if self.tp_labels else ""
+            rows.append((f"익절{i} ({tag})" if tag and not tag.endswith("R") else f"익절{i}", u, l, r))
+        rows.append(("트레일링", self.u_trail, self.l_trail, float("nan")))
         df = pd.DataFrame(rows, columns=["구분", self.signal_ticker, self.letf_ticker, "R"])
         df[f"{self.signal_ticker} %"] = df[self.signal_ticker] / self.u_entry - 1
         df[f"{self.letf_ticker} %"] = df[self.letf_ticker] / self.l_entry - 1
@@ -66,8 +71,8 @@ class TradePlan:
             ("1", "매수", t, self.sizing.shares, f"지정가 {self.l_entry:.2f}", "진입"),
             ("2", "매도", t, self.sizing.shares, f"감시가 {self.l_stop:.2f}",
              f"손절 (기초 {self.signal_ticker} {self.u_stop:.2f} 이탈 시 알림 기준)"),
-            ("3", "매도", t, q1, f"지정가 {self.l_tps[0]:.2f}", f"익절1 ({self.r_multiples[0]:g}R)"),
-            ("4", "매도", t, q2, f"지정가 {self.l_tps[1]:.2f}", f"익절2 ({self.r_multiples[1]:g}R)"),
+            ("3", "매도", t, q1, f"지정가 {self.l_tps[0]:.2f}", f"익절1 ({self.r_multiples[0]:.1f}R)"),
+            ("4", "매도", t, q2, f"지정가 {self.l_tps[1]:.2f}", f"익절2 ({self.r_multiples[1]:.1f}R)"),
             ("5", "매도", t, q_rest, f"감시가 {self.l_trail:.2f}", "잔량 트레일링 — 매일 갱신"),
         ]
         return pd.DataFrame(rows, columns=["#", "구분", "종목", "수량", "가격", "메모"]).set_index("#")
@@ -95,6 +100,7 @@ def build_plan(
     sigma_daily: float | None = None,
     expense: float = 0.0,
     u_stop_override: float | None = None,
+    tp_method: str | None = None,
 ) -> TradePlan:
     """d: 지표가 붙은 기초 OHLC (일봉 또는 시간봉). l_price: LETF 현재가."""
     lv, sz = strat["levels"], strat["sizing"]
@@ -104,8 +110,13 @@ def build_plan(
     # 현재가가 아닌 가격에 진입할 계획이면 LETF 진입가도 환산
     l_entry = lev.convert_price(u_now, u_entry, l_price, k)
     method = sl_method or lv["sl_method"]
-    u_stop = float(u_stop_override) if u_stop_override else stop_loss(d, u_entry, direction, lv, method)
-    u_tps = take_profits(u_entry, u_stop, lv["r_multiples"])
+    tp_method = tp_method or lv.get("tp_method", "r")
+    kl = key_levels(d, strat["structure"])
+    u_stop = float(u_stop_override) if u_stop_override else stop_loss(d, u_entry, direction, lv, method, kl)
+    tps = take_profit_levels(u_entry, u_stop, lv, tp_method, kl)
+    u_tps = [p for p, _ in tps]
+    risk_u = abs(u_entry - u_stop)
+    r_mults = [(p - u_entry) * direction / risk_u for p in u_tps]
     u_trail = chandelier(d, direction, lv["chandelier_n"], lv["chandelier_mult"])
 
     def conv(u):
@@ -140,12 +151,15 @@ def build_plan(
         l_trail=conv(u_trail),
         sizing=sizing,
         exit_shares=split_shares(sizing.shares, lv["tp_fractions"]),
-        r_multiples=list(lv["r_multiples"]),
+        r_multiples=r_mults,
         sigma_daily=sigma,
         gap_pct=sz["gap_pct"],
         gap_u=gap_u,
         gap_l=gap_l,
         gap_loss=sizing.shares * (l_entry - gap_l),
         expense=expense,
+        tp_method=tp_method,
+        tp_labels=[t for _, t in tps],
+        key_levels=kl,
         notes=notes,
     )

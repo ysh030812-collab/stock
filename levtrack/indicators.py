@@ -62,6 +62,29 @@ def rolling_rank(s: pd.Series, window: int) -> pd.Series:
     return s.rolling(window, min_periods=minp).apply(lambda x: (x <= x[-1]).mean(), raw=True)
 
 
+def obv(df: pd.DataFrame) -> pd.Series:
+    """On-Balance Volume."""
+    sign = np.sign(df["Close"].diff()).fillna(0)
+    return (sign * df["Volume"]).cumsum()
+
+
+def updown_volume_ratio(df: pd.DataFrame, n: int = 20) -> pd.Series:
+    """n봉 동안 상승봉 거래량 / 전체 거래량 (0.5 초과면 매수 우위)."""
+    up = df["Volume"].where(df["Close"].diff() > 0, 0.0)
+    tot = df["Volume"].rolling(n, min_periods=n).sum()
+    return up.rolling(n, min_periods=n).sum() / tot.replace(0, np.nan)
+
+
+def add_relative_strength(d: pd.DataFrame, bench_close: pd.Series, n_sma: int = 50, n_roc: int = 20) -> pd.DataFrame:
+    """기준지수 대비 상대강도 (예: SOXX / QQQ)."""
+    out = d.copy()
+    b = bench_close.reindex(out.index, method="ffill")
+    out["rs"] = out["Close"] / b
+    out["rs_sma"] = sma(out["rs"], n_sma)
+    out["rs_roc"] = out["rs"].pct_change(n_roc)
+    return out
+
+
 def add_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:
     """strategy.yaml 의 indicators 섹션으로 지표 컬럼을 추가한 사본을 반환."""
     out = df.copy()
@@ -81,6 +104,14 @@ def add_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:
     out["range_low"] = out["Low"].rolling(rw, min_periods=min(rw, 20)).min()
     dn = p["donchian"]
     out["donchian_mid"] = (out["High"].rolling(dn).max() + out["Low"].rolling(dn).min()) / 2
+    out["dc_high"] = out["High"].rolling(dn).max().shift(1)  # 직전 n봉 고가 (돌파 판단용)
+    out["dc_low"] = out["Low"].rolling(dn).min().shift(1)
+    if "Volume" in out and out["Volume"].fillna(0).sum() > 0:
+        vol = out["Volume"].astype(float)
+        out["obv"] = obv(out)
+        out["obv_ema"] = ema(out["obv"], p.get("obv_ema", 20))
+        out["vol_ratio"] = vol / sma(vol, p.get("vol_avg", 20)).replace(0, np.nan)
+        out["updown_vol"] = updown_volume_ratio(out, p.get("vol_avg", 20))
     out["rvol"] = realized_vol(c, p["vol_window"])
     out["rvol_rank"] = rolling_rank(out["rvol"], p["vol_rank_window"])
     return out
