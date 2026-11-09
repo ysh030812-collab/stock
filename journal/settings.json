@@ -3,7 +3,7 @@
  "eq": 10000.0,
  "risk": 3.0,
  "maxw": 100,
- "tvol": 20,
+ "tvol": 80,
  "neu": 0.5,
  "vf": true,
  "sl": "atr",
