@@ -22,7 +22,13 @@ def _run(_md, mode: str, pair_json: str, strat_json: str, start: str | None, all
     if strategy == "trend":
         if not allow_short:
             strat = {**strat, "trend_ls": {**strat.get("trend_ls", {}), "short_entry": 1e9}}
-        return TR.backtest(u, pair, strat, equity0, start, cost_bps)
+        rf = None
+        if mode != "demo":
+            try:
+                rf = (_md.ohlc("^IRX", "1d", "max")["Close"] / 100).clip(lower=0)  # 미국 3개월 국채 금리
+            except Exception:  # noqa: BLE001
+                rf = None
+        return TR.backtest(u, pair, strat, equity0, start, cost_bps, rf=rf)
     bench = None
     if pair.get("benchmark"):
         try:

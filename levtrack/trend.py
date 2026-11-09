@@ -17,9 +17,8 @@ import math
 import numpy as np
 import pandas as pd
 
-from .backtest import BTResult, benchmarks, perf_stats
+from .backtest import BTResult, perf_stats
 from .indicators import rsi as _rsi
-from .leverage import synthetic_letf_ohlc
 
 DEFAULTS = {
     "ma": 200, "buf": 0.03, "vt": 0.40, "vol_window": 20,
@@ -122,8 +121,12 @@ def today(u: pd.DataFrame, p: dict | None = None) -> dict:
 
 
 def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: float = 10_000.0,
-             start: str | None = None, cost_bps: float = 10.0, execution: str = "next_open") -> BTResult:
+             start: str | None = None, cost_bps: float = 10.0, execution: str = "next_open",
+             rf: pd.Series | None = None, borrow_spread: float = 0.005) -> BTResult:
     """추세 롱숏 백테스트 (합성 3배 ETF, 비중이 band 이상 바뀔 때만 조정).
+
+    rf: 연 무위험금리(소수, 예: ^IRX/100). 주면 실제 레버리지 ETF 처럼
+        3배 롱 = 3r − 2(rf+spread) − 보수,  3배 숏 = −3r + 3rf − 보수,  현금 = rf 로 계산.
 
     execution='next_open': i 일 종가 신호 → i+1 일 시가에 체결 (한국에서 아침 확인 후 밤 개장 주문하는 현실)
     execution='close'    : i 일 종가에 체결 (장 마감 동시호가 주문 가정)
@@ -137,6 +140,9 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
     r = u["Close"].pct_change().fillna(0).to_numpy()
     fee_l = long_ins.get("expense", 0.0) / 252
     fee_s = (short_ins or long_ins).get("expense", 0.0) / 252
+    RFD = (rf.reindex(u.index, method="ffill").fillna(0).clip(lower=0).to_numpy() / 252) if rf is not None \
+        else np.zeros(len(u))
+    SP = borrow_spread / 252 if rf is not None else 0.0
     side, tw = s["side"].to_numpy(), s["weight"].to_numpy()
     if short_ins is None:
         tw = np.where(side < 0, 0.0, tw)
@@ -150,12 +156,16 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
     expo = np.zeros(n - i0)
     trades, open_t = [], None
 
-    def hold(w, sd, ret_u, fee):
-        """보유 비중 w, 방향 sd 로 기초 수익 ret_u 구간을 지날 때 (계좌 배수, 새 비중)."""
+    def fin(sd, rfd):
+        """레버리지 ETF 의 하루 금리 효과 (롱: 차입비용, 숏: 담보 이자)."""
+        return -2 * (rfd + SP) if sd > 0 else (3 * rfd if sd < 0 else 0.0)
+
+    def hold(w, sd, ret_u, fee, rfd=0.0):
+        """보유 비중 w, 방향 sd 로 기초 수익 ret_u 구간을 지날 때 (계좌 배수, 새 비중). 나머지 현금은 rfd."""
         if sd == 0 or w <= 0:
-            return 1.0, w
-        lr = (3 * ret_u if sd > 0 else -3 * ret_u) - fee
-        g = 1 + w * lr
+            return 1.0 + rfd, 0.0
+        lr = (3 * ret_u if sd > 0 else -3 * ret_u) - fee + fin(sd, rfd)
+        g = 1 + w * lr + (1 - w) * rfd
         return g, (w * (1 + lr) / g if g > 0 else 0.0)
 
     for j, i in enumerate(range(i0, n)):
@@ -174,12 +184,15 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
             l_open = 1 + k * gap
             intra = ((1 + k * (C_[i] / C_[i - 1] - 1)) / l_open - 1) if l_open > 0 else 0.0
             if side_cur != 0 and w_cur > 0:
-                g2 = 1 + w_cur * (intra - fee)
-                w_cur = w_cur * (1 + intra - fee) / g2 if g2 > 0 else 0.0
+                lr = intra - fee + fin(side_cur, RFD[i])
+                g2 = 1 + w_cur * lr + (1 - w_cur) * RFD[i]
+                w_cur = w_cur * (1 + lr) / g2 if g2 > 0 else 0.0
                 e *= g2
+            else:
+                e *= 1 + RFD[i]
             pend = None
         else:
-            g, w_cur = hold(w_cur, side_cur, r[i], fee)
+            g, w_cur = hold(w_cur, side_cur, r[i], fee, RFD[i])
             e *= g
         eq[j] = e
         expo[j] = w_cur * 3 * side_cur
@@ -218,9 +231,17 @@ def backtest(u: pd.DataFrame, pair: dict, strat: dict | None = None, equity0: fl
         "종목": (short_ins if t["mode"] == "SHORT" else long_ins)["ticker"],
         "계좌 기여": t["exit_eq"] / t["entry_eq"] - 1, "보유일": (t["exit"] - t["entry"]).days,
     } for t in trades])
-    d = pd.DataFrame({"Close": u["Close"], "sma_slow": s["sma"]})
-    letf = synthetic_letf_ohlc(u, long_ins["leverage"], long_ins.get("expense", 0.0), 100.0)["Close"]
-    bm = benchmarks(d, letf, i0, equity0, long_ins["ticker"], pair["signal"])
+    # 벤치마크 (같은 금리 가정)
+    c_ = u["Close"].iloc[i0:]
+    l3 = pd.Series(3 * r - 2 * (RFD + SP) - fee_l, index=u.index).iloc[i0:]
+    above = (u["Close"] > s["sma"]).shift(1).fillna(False).iloc[i0:].astype(float)
+    cash = pd.Series(RFD, index=u.index).iloc[i0:]
+    filt = above * l3 + (1 - above) * cash - above.diff().abs().fillna(0) * cost
+    bm = pd.DataFrame({
+        f"{pair['signal']} 보유": equity0 * c_ / c_.iloc[0],
+        f"{long_ins['ticker']} 보유": equity0 * (1 + l3.clip(lower=-1)).cumprod(),
+        f"{long_ins['ticker']} 200일선 필터": equity0 * (1 + filt).cumprod(),
+    })
     bm.insert(0, "전략", equity)
     bstats = pd.DataFrame({c: perf_stats(bm[c]) for c in bm}).T
     stats = {**perf_stats(equity), **_trade_stats(tr), "노출 비율": float(np.mean(expo != 0))}
