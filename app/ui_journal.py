@@ -87,15 +87,18 @@ def _fmt(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     return df.style.format({k: v for k, v in fmt.items() if k in df}, na_rep="-")
 
 
-def _exit_box(t: dict, cur: float | None) -> None:
+def _exit_box(t: dict, cur: float | None, lv: dict | None = None) -> None:
     rem = J.remaining_shares(t)
     p = t["plan"]
     with st.expander("청산 기록"):
         reason = st.segmented_control("사유", J.EXIT_REASONS, key=f"rsn_{t['id']}", required=True,
                                       default=J.EXIT_REASONS[0])
         f1, f2 = p.get("tp_fractions", [0.33, 0.33])
-        sug_price = {"익절1": p["l_tps"][0], "익절2": p["l_tps"][1], "손절": p["l_stop"],
-                     "트레일링": cur or p["l_trail"], "수동": cur or t["entry_price"]}[reason]
+        tp_today = {name: l for name, _, l in lv["tps"]} if lv else {}
+        sug_price = {"익절1": tp_today.get("익절1", p["l_tps"][0]), "익절2": tp_today.get("익절2", p["l_tps"][1]),
+                     "손절": lv["l_stop"] if lv else p["l_stop"],
+                     "트레일링": (lv["l_trail"] if lv and lv["l_trail"] else None) or cur or p["l_trail"],
+                     "수동": cur or t["entry_price"]}[reason]
         sug_qty = {"익절1": round(t["shares"] * f1), "익절2": round(t["shares"] * f2)}.get(reason, rem)
         sug_qty = min(rem, max(1, sug_qty))
         with st.container(horizontal=True, gap="medium"):
@@ -121,7 +124,39 @@ def _delete_box(t: dict) -> None:
                 st.rerun()
 
 
-def view(md, fx) -> None:
+def _levels_for(t: dict, md, frame_fn, strat) -> tuple[dict | None, bool]:
+    """오늘 기준 손절·트레일·익절 가격 계산 (데이터를 못 받으면 None)."""
+    from levtrack.levels import chandelier
+
+    try:
+        u_now, l_now = md.last(t["signal"]), md.last(t["ticker"])
+        d = frame_fn(t["pair_id"], t.get("timeframe", "1d"))
+        # 진입 이후 구간만 써서 진입 전 고점이 트레일에 섞이지 않게 함
+        since = d[d.index >= pd.Timestamp(t["entry_date"])]
+        ch = None
+        if len(since) >= 1:
+            lvcfg = strat["levels"]
+            n = min(lvcfg["chandelier_n"], len(since))
+            ch = chandelier(since.assign(atr=d["atr"].reindex(since.index)), t["direction"], n, lvcfg["chandelier_mult"])
+        return J.today_levels(t, u_now=u_now, l_now=l_now, chandelier_u=ch)
+    except Exception:  # noqa: BLE001
+        return None, False
+
+
+def _today_table(t: dict, lv: dict) -> None:
+    rows = [("손절 감시가", lv["stop_u"], lv["l_stop"]),
+            ("트레일 감시가" + ("" if lv["trail_active"] else " (아직 손절 아래)"), lv["trail_u"], lv["l_trail"]),
+            ("➡️ 적용 감시가", lv["eff_u"], lv["l_eff"])]
+    rows += [(f"{name} 지정가", u, l) for name, u, l in lv["tps"]]
+    df = pd.DataFrame(rows, columns=["오늘 주문", f"{t['signal']} (알림 기준)", f"{t['ticker']} (MTS 입력)"])
+    st.table(df.style.format({df.columns[1]: "{:,.2f}", df.columns[2]: "{:,.2f}"}, na_rep="-"), hide_index=True)
+    upd = t.get("trail_updated")
+    st.caption("레버리지 ETF 는 매일 리셋되어 같은 기초 가격이라도 LETF 가격이 달라집니다. 장 시작 전 MTS 의 감시가·지정가를 "
+               "이 표대로 고치세요. **감시가는 올리기만** 합니다(숏 ETF 도 LETF 가격 기준으로는 올리기만)."
+               + (f" 트레일 마지막 상향: {upd}" if upd else ""))
+
+
+def view(md, fx, frame_fn=None, strat=None) -> None:
     ts = trades()
     s = store()
     with st.container(horizontal=True, vertical_alignment="center"):
@@ -161,8 +196,11 @@ def view(md, fx) -> None:
         opens = [t for t in ts if not J.is_closed(t)]
         if not opens:
             st.info("보유 중인 거래가 없습니다. 플래너에서 주문표 아래 **매매일지에 기록**으로 진입을 남기세요.")
+        dirty = False
         for t in reversed(opens):
             cur = prices.get(t["ticker"])
+            lv, changed = _levels_for(t, md, frame_fn, strat) if frame_fn and strat else (None, False)
+            dirty |= changed
             m = J.metrics(t, cur)
             p = t["plan"]
             with st.container(border=True):
@@ -173,18 +211,24 @@ def view(md, fx) -> None:
                     st.metric("현재가", "-" if cur is None else f"{cur:,.2f}", border=True, width=140)
                     st.metric("평가 손익", f"${m['pnl']:+,.0f}", f"{m['return_pct']:+.1%}", border=True, width=140)
                     st.metric("R", "-" if pd.isna(m["r"]) else f"{m['r']:+.2f}R", border=True, width=140)
-                    st.metric("손절 시 손실", f"${abs(p['l_stop'] - t['entry_price']) * m['remaining']:,.0f}",
-                              border=True, width=140)
+                    stop_px = lv["l_eff"] if lv else p["l_stop"]
+                    st.metric("감시가 체결 시", f"${(stop_px - t['entry_price']) * m['remaining']:+,.0f}",
+                              "트레일 수익 확정" if lv and lv["trail_active"] and stop_px > t["entry_price"] else None,
+                              delta_color="off", delta_arrow="off", border=True, width=150)
+                if lv:
+                    _today_table(t, lv)
                 st.markdown(
-                    f'<div class="lt-sub">계획: 손절 {p["l_stop"]:,.2f} · 익절1 {p["l_tps"][0]:,.2f} · '
-                    f'익절2 {p["l_tps"][1]:,.2f} · 트레일(진입 시) {p["l_trail"]:,.2f} — 트레일은 플래너에서 매일 확인'
+                    f'<div class="lt-sub">진입 시 계획(LETF): 손절 {p["l_stop"]:,.2f} · 익절1 {p["l_tps"][0]:,.2f} · '
+                    f'익절2 {p["l_tps"][1]:,.2f}'
                     + (f"<br>메모: {t['note']}" if t.get("note") else "") + "</div>", unsafe_allow_html=True)
                 if t["exits"]:
                     st.table(pd.DataFrame(t["exits"])[["date", "reason", "shares", "price"]]
                              .rename(columns={"date": "날짜", "reason": "사유", "shares": "수량", "price": "가격"})
                              .style.format({"가격": "{:,.2f}"}), hide_index=True)
-                _exit_box(t, cur)
+                _exit_box(t, cur, lv)
                 _delete_box(t)
+        if dirty:
+            save("트레일링 스탑 상향 저장")
 
     elif tab == "청산 완료":
         closed = [t for t in ts if J.is_closed(t)]

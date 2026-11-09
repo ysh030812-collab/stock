@@ -32,7 +32,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 일지 저장 수정"
+APP_VERSION = "2026.11.09 일지 오늘 주문가"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -385,6 +385,6 @@ def view_tracking() -> None:
     st.caption("SOXX 와 SOXL/SOXS 는 추종 지수가 달라 괴리가 상대적으로 큽니다.")
 
 
-{VIEWS[0]: view_dashboard, VIEWS[1]: view_planner, VIEWS[2]: lambda: uj.view(md, fx), VIEWS[3]: view_calc,
+{VIEWS[0]: view_dashboard, VIEWS[1]: view_planner, VIEWS[2]: lambda: uj.view(md, fx, lambda pid, tf: get_frame(mode, pid, tf), strat), VIEWS[3]: view_calc,
  VIEWS[4]: view_tracking}[ss["view"]]()
 st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")

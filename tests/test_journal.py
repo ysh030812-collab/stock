@@ -233,3 +233,34 @@ def test_diagnose_classic_token_without_repo_scope():
     res = GitHubStore("ghp_" + "E" * 36, "o/r", session=Classic()).diagnose()
     assert res[0][0] and "public_repo" in res[0][1]
     assert res[1][0] is False and "'repo' 권한이 없습니다" in res[1][1]
+
+
+def test_today_levels_reconvert_and_ratchet():
+    t = trade()  # 롱 TQQQ: 기초 진입 500, 손절 486.7, 익절 513.3/526.7
+    # 다음 날 QQQ 510, TQQQ 86 (리셋 반영) → 손절/익절을 오늘 가격으로 다시 환산
+    lv, changed = J.today_levels(t, u_now=510, l_now=86, chandelier_u=480)
+    assert changed and t["trail_u"] == 480 and not lv["trail_active"]
+    assert lv["l_stop"] == pytest.approx(86 * (1 + 3 * (486.7 / 510 - 1)))
+    assert lv["eff_u"] == 486.7 and [n for n, _, _ in lv["tps"]] == ["익절1", "익절2"]
+    # 트레일은 올라가기만 (낮은 값은 무시)
+    lv, changed = J.today_levels(t, u_now=520, l_now=92, chandelier_u=495)
+    assert changed and lv["trail_active"] and lv["eff_u"] == 495
+    lv, changed = J.today_levels(t, u_now=515, l_now=89, chandelier_u=490)
+    assert not changed and t["trail_u"] == 495
+    # 익절1 체결 후에는 익절2 만 남음
+    J.add_exit(t, price=88, shares=3, reason="익절1")
+    lv, _ = J.today_levels(t, u_now=515, l_now=89)
+    assert [n for n, _, _ in lv["tps"]] == ["익절2"]
+
+
+def test_today_levels_short_ratchets_down():
+    t = trade()
+    t.update(direction=-1, k=-3, ticker="SQQQ")
+    t["plan"].update(u_stop=520.0, u_tps=[480.0, 460.0, 440.0])
+    J.today_levels(t, u_now=495, l_now=20, chandelier_u=525)
+    lv, changed = J.today_levels(t, u_now=490, l_now=21, chandelier_u=510)
+    assert changed and t["trail_u"] == 510 and lv["trail_active"]
+    _, changed = J.today_levels(t, u_now=492, l_now=20.8, chandelier_u=515)
+    assert not changed and t["trail_u"] == 510
+    # LETF 기준으로 적용 감시가는 현재 LETF 가격보다 아래 (매도 감시)
+    assert lv["l_eff"] < lv["l_now"]

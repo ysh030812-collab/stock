@@ -10,6 +10,8 @@ from datetime import date, datetime
 
 import pandas as pd
 
+from .leverage import convert_price
+
 EXIT_REASONS = ["익절1", "익절2", "트레일링", "손절", "수동"]
 TP_SPLITS = {
     "균형 33/33/34": [0.33, 0.33],
@@ -75,6 +77,40 @@ def add_exit(trade: dict, *, price: float, shares: int, reason: str, exit_date: 
     trade["exits"].append({"date": exit_date or _today(), "price": float(price), "shares": int(shares),
                            "reason": reason, "note": note, "fee": float(fee)})
     return trade
+
+
+def today_levels(trade: dict, *, u_now: float, l_now: float, chandelier_u: float | None = None) -> tuple[dict, bool]:
+    """보유 중 거래의 '오늘' 주문 가격.
+
+    - 레버리지 ETF 는 매일 리셋되므로, 계획한 기초 가격(손절·익절)을 오늘의 기초가·LETF 가로 다시 환산한다.
+    - 트레일링 스탑(기초 기준 샹들리에)은 유리한 쪽으로만 움직이게 고정(래칫)해 trade['trail_u'] 에 저장한다.
+    반환: (레벨 dict, 트레일이 갱신됐는지)
+    """
+    d, k, p = trade["direction"], trade["k"], trade["plan"]
+    changed = False
+    if chandelier_u is not None and not math.isnan(chandelier_u):
+        prev = trade.get("trail_u")
+        if prev is None or (chandelier_u - prev) * d > 0:
+            trade["trail_u"] = float(chandelier_u)
+            trade["trail_updated"] = _today()
+            changed = True
+    trail_u = trade.get("trail_u")
+    stop_u = p["u_stop"]
+    trail_active = trail_u is not None and (trail_u - stop_u) * d > 0
+    eff_u = trail_u if trail_active else stop_u
+
+    def conv(u):
+        return convert_price(u_now, u, l_now, k)
+
+    hit = {e["reason"] for e in trade["exits"]}
+    tps = [(f"익절{i}", u, conv(u)) for i, u in enumerate(p["u_tps"][:2], 1) if f"익절{i}" not in hit]
+    return {
+        "u_now": u_now, "l_now": l_now,
+        "stop_u": stop_u, "l_stop": conv(stop_u),
+        "trail_u": trail_u, "l_trail": conv(trail_u) if trail_u is not None else None,
+        "trail_active": trail_active, "eff_u": eff_u, "l_eff": conv(eff_u),
+        "tps": tps,
+    }, changed
 
 
 def remaining_shares(trade: dict) -> int:
