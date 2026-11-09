@@ -32,7 +32,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 일지 오늘 주문가"
+APP_VERSION = "2026.11.09 대기 주문표"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -194,9 +194,14 @@ def view_dashboard() -> None:
                 st.markdown(badge(rl, rc) + badge(t.state, timing_cls(t)), unsafe_allow_html=True)
                 with st.container(horizontal=True):
                     st.metric(pair["signal"], f"{c.iloc[-1]:,.2f}", f"{c.iloc[-1] / c.iloc[-2] - 1:+.2%}", width=140)
-                    st.metric("권장", f"{plan.sizing.shares}주" if plan.sizing.shares else "관망",
-                              f"{plan.sizing.weight:.1%} · {ins['ticker']}", delta_color="off", delta_arrow="off",
-                              width=140)
+                    if t.ok and plan.sizing.shares:
+                        lbl, val = "지금 진입", f"{plan.sizing.shares}주"
+                    elif t.blocked or not plan.sizing.shares:
+                        lbl, val = "권장", "관망"
+                    else:
+                        lbl, val = "대기 (진입 시)", f"{plan.sizing.shares}주"
+                    st.metric(lbl, val, f"{plan.sizing.weight:.1%} · {ins['ticker']}", delta_color="off",
+                              delta_arrow="off", width=140)
                 v = sig.values
                 lines = [
                     f"Bull <b>{sig.bull:.0f}</b> / Bear <b>{sig.bear:.0f}</b> · 변동성 계수 ×{sig.vol_factor:.2f}",
@@ -244,7 +249,10 @@ def view_planner() -> None:
                                       placeholder=f"현재가 {u_now:,.2f}", key=f"entry_{pid}", width=260)
             u_stop = st.number_input(f"{pair['signal']} 손절가", value=None, step=0.5, format="%.2f",
                                      placeholder="자동", key=f"stop_{pid}", width=260)
-    entry = u_entry if u_entry else u_now
+    timing = a.timing[direction]
+    # 눌림 대기·과열이면 '지금 가격'이 아니라 기다릴 가격(시간봉 EMA20)으로 지정가 매수 계획을 만든다
+    use_wait = (not timing.ok) and (not timing.blocked) and timing.wait_price is not None and not u_entry
+    entry = u_entry if u_entry else (timing.wait_price if use_wait else u_now)
     if u_stop and (u_stop - entry) * direction >= 0:
         st.warning(f"손절가가 {'진입가보다 낮아야' if direction > 0 else '진입가보다 높아야'} 합니다. 자동 계산값을 씁니다.")
         u_stop = None
@@ -254,9 +262,11 @@ def view_planner() -> None:
         st.error(f"플랜 계산 오류: {e}")
         return
 
-    timing = a.timing[direction]
-    box = st.success if timing.ok else (st.error if timing.state.startswith("🚫") else st.warning)
-    box(f"**시간봉 진입 타이밍 ({'롱' if direction > 0 else '숏'}) — {timing.state}**  \n" + " · ".join(timing.reasons))
+    box = st.success if timing.ok else (st.error if timing.blocked else st.warning)
+    extra = (f"  \n👉 **{pair['signal']} {timing.wait_price:,.2f}** (시간봉 EMA20)까지 "
+             f"{'눌리면' if direction > 0 else '반등하면'} 진입 — 아래는 그 가격 기준 계획입니다." if use_wait else "")
+    box(f"**시간봉 진입 타이밍 ({'롱' if direction > 0 else '숏'}) — {timing.state}**  \n" + " · ".join(timing.reasons)
+        + extra)
     rl, rc = REGIME[sig.regime]
     st.markdown(
         badge(f"일봉 {rl}", rc)
@@ -283,10 +293,27 @@ def view_planner() -> None:
     for n in plan.notes:
         st.caption("ℹ️ " + n)
 
-    st.markdown("##### 📝 메리츠증권 주문표")
-    st.table(plan.order_sheet(), hide_index=True)
-    st.caption("LETF 기준 가격은 매일 리셋되므로 장 시작 전 다시 확인하세요. 감시 주문이 안 되면 기초 가격 기준으로 수동 매도합니다.")
-    uj.entry_form(plan, pair_id=pid, signal=sig, timing=timing, timeframe=tf, fx=fx)
+    reset_note = "LETF 기준 가격은 매일 리셋되므로 장 시작 전 다시 확인하세요. 감시 주문이 안 되면 기초 가격 기준으로 수동 매도합니다."
+    if timing.blocked and not u_entry:
+        st.info("🚫 **진입 금지** — 일봉 국면이 이 방향을 허용하지 않아 주문표를 만들지 않습니다. "
+                "직접 판단으로 들어가려면 위의 '진입가 직접 입력'을 쓰세요.")
+    elif timing.ok or u_entry:
+        st.markdown("##### 📝 메리츠증권 주문표 — " + ("직접 입력한 진입가" if u_entry and not timing.ok else "지금 진입"))
+        st.table(plan.order_sheet(), hide_index=True)
+        st.caption(reset_note)
+        uj.entry_form(plan, pair_id=pid, signal=sig, timing=timing, timeframe=tf, fx=fx)
+    elif use_wait:
+        st.markdown("##### 📝 눌림 대기 주문표 — 지정가 매수 예약")
+        st.table(plan.order_sheet(), hide_index=True)
+        st.caption(f"1번 매수 지정가({plan.l_entry:,.2f})는 {pair['signal']}가 {timing.wait_price:,.2f}까지 "
+                   f"{'내려올' if direction > 0 else '올라올'} 때 체결되도록 맞춘 값입니다. 체결되면 2~5번을 거세요. "
+                   "지정가는 보통 당일만 유효하고 EMA20 도 매일 움직이니 매일 갱신하세요. " + reset_note)
+        uj.entry_form(plan, pair_id=pid, signal=sig, timing=timing, timeframe=tf, fx=fx)
+    else:
+        st.info("⏳ 아직 진입 신호가 없습니다. 반등 신호(✅)가 뜨면 이 화면에 진입 주문표가 나옵니다.")
+        with st.expander("참고: 지금 가격에 들어간다면"):
+            st.table(plan.order_sheet(), hide_index=True)
+            st.caption(reset_note)
 
     # ---- 차트
     periods = PERIODS[tf]

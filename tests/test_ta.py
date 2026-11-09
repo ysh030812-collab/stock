@@ -179,3 +179,15 @@ def test_timing_pullback_trigger():
     t = entry_timing(_frame(_zigzag_uptrend() + pull), +1, True, STRAT["timing"], STRAT["divergence"])
     assert t.ok and t.state == "✅ 눌림 반등 진입"
     assert "상승 장악형" in t.reasons and "EMA20 회복" in t.reasons
+
+
+def test_timing_wait_price_for_pullback_and_overheat():
+    h = _frame(_zigzag_uptrend())
+    t = entry_timing(h, +1, True, STRAT["timing"], STRAT["divergence"])
+    assert t.state == "⏳ 눌림 대기" and not t.blocked
+    assert t.wait_price == pytest.approx(h["ema_fast"].iloc[-1]) and t.wait_price < h["Close"].iloc[-1]
+    straight = [[100 + i * 0.5, 100.6 + i * 0.5, 99.6 + i * 0.5, 100.4 + i * 0.5] for i in range(80)]
+    hot = entry_timing(_frame(straight), +1, True, STRAT["timing"], STRAT["divergence"])
+    assert hot.state.startswith("⚠️") and hot.wait_price is not None
+    blocked = entry_timing(h, +1, False, STRAT["timing"], STRAT["divergence"])
+    assert blocked.blocked and blocked.wait_price is None

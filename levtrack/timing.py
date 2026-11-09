@@ -18,6 +18,11 @@ class Timing:
     direction: int
     reasons: list = field(default_factory=list)
     trend_agree: bool = False
+    wait_price: float | None = None  # 기다릴 눌림 가격 (기초, 시간봉 EMA20). 대기·과열일 때만
+
+    @property
+    def blocked(self) -> bool:
+        return self.state.startswith("🚫")
 
     @property
     def label(self) -> str:
@@ -50,7 +55,7 @@ def entry_timing(h: pd.DataFrame, direction: int, allowed: bool, cfg: dict, div_
     overheated = (rsi_now > cfg["overheat_rsi"]) if d > 0 else (rsi_now < 100 - cfg["overheat_rsi"])
     if overheated or stretch > cfg["overheat_atr"]:
         reasons.append(f"RSI {rsi_now:.0f}, EMA20 대비 {stretch:.1f} ATR 이탈")
-        return Timing("⚠️ 과열 — 추격 금지", False, d, reasons, trend_agree)
+        return Timing("⚠️ 과열 — 추격 금지", False, d, reasons, trend_agree, float(last["ema_fast"]))
 
     vol_ratio = last.get("vol_ratio")
     vol_ok = vol_ratio is None or pd.isna(vol_ratio) or vol_ratio >= cfg["breakout_vol"]
@@ -87,6 +92,8 @@ def entry_timing(h: pd.DataFrame, direction: int, allowed: bool, cfg: dict, div_
     if trend_agree:
         reasons.append("눌림 확인됨, 반전 트리거 대기" if touched else "EMA20 부근 눌림 대기")
         reasons += triggers
-        return Timing("⏳ 눌림 대기", False, d, reasons, trend_agree)
+        ema = float(last["ema_fast"])
+        wait = ema if (float(last["Close"]) - ema) * d > 0 else None  # 아직 EMA20 위(숏은 아래)면 거기까지 기다림
+        return Timing("⏳ 눌림 대기", False, d, reasons, trend_agree, wait)
     reasons += triggers
     return Timing("⏳ 시간봉 추세 불일치", False, d, reasons, trend_agree)
