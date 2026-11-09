@@ -75,6 +75,19 @@ def updown_volume_ratio(df: pd.DataFrame, n: int = 20) -> pd.Series:
     return up.rolling(n, min_periods=n).sum() / tot.replace(0, np.nan)
 
 
+def adx(df: pd.DataFrame, n: int = 14) -> pd.DataFrame:
+    """ADX(추세 강도)와 +DI/−DI."""
+    h, l, c = df["High"], df["Low"], df["Close"]
+    up, dn = h.diff(), -l.diff()
+    pdm = up.where((up > dn) & (up > 0), 0.0)
+    mdm = dn.where((dn > up) & (dn > 0), 0.0)
+    a = _wilder(true_range(df), n)
+    pdi = 100 * _wilder(pdm, n) / a
+    mdi = 100 * _wilder(mdm, n) / a
+    dx = (100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)).where((pdi + mdi) != 0, 0.0)  # 방향 움직임이 없으면 0
+    return pd.DataFrame({"adx": _wilder(dx, n), "pdi": pdi, "mdi": mdi})
+
+
 def add_relative_strength(d: pd.DataFrame, bench_close: pd.Series, n_sma: int = 50, n_roc: int = 20) -> pd.DataFrame:
     """기준지수 대비 상대강도 (예: SOXX / QQQ)."""
     out = d.copy()

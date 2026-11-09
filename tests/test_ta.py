@@ -191,3 +191,12 @@ def test_timing_wait_price_for_pullback_and_overheat():
     assert hot.state.startswith("⚠️") and hot.wait_price is not None
     blocked = entry_timing(h, +1, False, STRAT["timing"], STRAT["divergence"])
     assert blocked.blocked and blocked.wait_price is None
+
+
+def test_adx_trend_strength():
+    from levtrack.indicators import adx
+    trend_df = ohlc([[100 + i, 101 + i, 99.5 + i, 100.8 + i] for i in range(80)])
+    a = adx(trend_df).iloc[-1]
+    assert a["adx"] > 40 and a["pdi"] > a["mdi"]
+    chop = ohlc([[100, 101, 99, 100 + (0.5 if i % 2 else -0.5)] for i in range(80)])
+    assert adx(chop).iloc[-1]["adx"] < 25

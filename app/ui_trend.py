@@ -116,7 +116,7 @@ def dashboard(md, pairs: list[dict], p: dict, equity: float, go_plan) -> None:
 
 
 # ------------------------------------------------------------------ 플래너
-def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict], save_fn) -> None:
+def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict], save_fn, strat: dict | None = None) -> None:
     by_id = {x["id"]: x for x in pairs}
     pid = st.segmented_control("페어", list(by_id), key="pair_id", required=True,
                                format_func=lambda i: f"{by_id[i]['name']} {by_id[i]['signal']}", persist_state="session")
@@ -189,6 +189,13 @@ def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict
 
     _chart(sig, md, pair, p)
 
+    if strat is not None:
+        with st.expander("🔬 참고 지표 (규칙에는 쓰이지 않음)", expanded=False):
+            try:
+                indicator_panel(md, pair, strat)
+            except Exception as e:  # noqa: BLE001
+                st.caption(f"지표 계산 실패: {e}")
+
     with st.expander("📖 전략 규칙"):
         st.markdown(
             f"- **📈 추세 롱**: 종가 > 200일선×{1 + p['buf']:.2f} 진입, 종가 < 200일선×{1 - p['buf']:.2f} 청산 → 3배 롱\n"
@@ -199,6 +206,57 @@ def planner(md, pairs: list[dict], p: dict, equity: float, fx, trades: list[dict
             f"- **비중** = min(100%, 목표 변동성 {p['vt']:.0%} ÷ (3 × 최근 20일 변동성))\n"
             "- 1999년 이후 실제 데이터(합성 3배 ETF) 백테스트로 고른 규칙입니다. 🧪 백테스트에서 직접 확인하세요."
         )
+
+
+def indicator_panel(md, pair: dict, strat: dict) -> None:
+    """참고 지표 (매매 규칙에는 쓰이지 않음)."""
+    from levtrack.analysis import prepare
+    from levtrack.indicators import adx, rsi
+    from levtrack.signals import evaluate
+
+    d = prepare(md, pair, "1d", strat)
+    sig = evaluate(d, strat, md.try_last(pair.get("vol_index")))
+    last = d.iloc[-1]
+    a = adx(d).iloc[-1]
+    c = float(last["Close"])
+    v = sig.values
+    vix = v.get("vix")
+    bbp = (c - last["bb_lower"]) / (last["bb_upper"] - last["bb_lower"])
+    up, dn, mid = "🟢 강세", "🔴 약세", "⚪ 중립"
+    rows = [
+        ("200일선 거리", f"{c / last['sma_slow'] - 1:+.1%}", up if c > last["sma_slow"] else dn, "규칙의 기준선"),
+        ("50일선 vs 200일선", "골든크로스" if last["sma_fast"] > last["sma_slow"] else "데드크로스",
+         up if last["sma_fast"] > last["sma_slow"] else dn, "중기 추세"),
+        ("MACD", f"{last['macd']:,.2f} / 시그널 {last['macd_signal']:,.2f}",
+         up if last["macd"] > last["macd_signal"] else dn, "히스토그램 " + ("양(+)" if last["macd_hist"] > 0 else "음(−)")),
+        ("RSI(14)", f"{last['rsi']:.0f}", up if last["rsi"] > 55 else (dn if last["rsi"] < 45 else mid),
+         "70↑ 과매수 · 30↓ 과매도"),
+        ("RSI(2)", f"{float(rsi(d['Close'], 2).iloc[-1]):.0f}", mid, "규칙에 사용 (90↑ 반등 숏, 10↓ 과매도 롱)"),
+        ("ADX(14)", f"{a['adx']:.0f} (+DI {a['pdi']:.0f} / −DI {a['mdi']:.0f})",
+         (up if a["pdi"] > a["mdi"] else dn) if a["adx"] > 20 else mid, "20↑ 추세 뚜렷, 20↓ 횡보"),
+        ("OBV", "50일 평균 위" if v.get("obv_up") else "50일 평균 아래",
+         up if v.get("obv_up") else dn, "거래량 흐름"),
+        ("볼린저 %B", f"{bbp:.2f}", up if bbp > 0.8 else (dn if bbp < 0.2 else mid), "1↑ 상단 돌파 · 0↓ 하단 이탈"),
+        ("변동성지수", "-" if vix is None else f"{vix:.1f}",
+         mid if vix is None else (up if vix < 20 else (dn if vix > 30 else mid)), pair.get("vol_index", "")),
+        ("20일 변동성 순위", "-" if v.get("rvol_rank") is None else f"{v['rvol_rank']:.0%}", mid, "1년 중 백분위"),
+        ("52주 고점 대비", f"{v['drawdown']:+.1%}", mid, ""),
+    ]
+    if v.get("rs_above") is not None:
+        rows.append(("상대강도", f"vs {pair['benchmark']}", up if v["rs_above"] else dn, "50일 평균 대비"))
+    divs = ", ".join(f"{'강세' if x['bias'] > 0 else '약세'}({x['osc'].replace('_hist', '').upper()} {x['bars_ago']}봉 전)"
+                     for x in sig.divergences) or "없음"
+    pats = ", ".join(("▲" if p_["bias"] > 0 else "▼") + p_["label"] for p_ in sig.patterns if p_["bias"]) or "없음"
+    rows += [("다이버전스", divs, mid, "최근 10봉"), ("캔들 패턴", pats, mid, "최근 3봉"),
+             ("종합 점수", f"Bull {sig.bull:.0f} / Bear {sig.bear:.0f}",
+              up if sig.bull >= 65 else (dn if sig.bear >= 65 else mid), "추세·모멘텀·구조·거래량·상대강도")]
+    bull = sum(r[2] == up for r in rows)
+    bear = sum(r[2] == dn for r in rows)
+    st.markdown(f"강세 {bull}개 · 약세 {bear}개 · 중립 {len(rows) - bull - bear}개")
+    st.table(pd.DataFrame(rows, columns=["지표", "값", "상태", "설명"]), hide_index=True)
+    st.caption("⚠️ 참고용입니다. 1999년 이후 실제 데이터로 이 지표들(MACD·ADX·골든크로스·RSI14·OBV·VIX·상대강도·모멘텀·볼린저 등 19개)을 "
+               "규칙에 하나씩 넣어 봤지만 세 지수·두 기간에서 일관되게 좋아지는 것이 없었고, 청산을 앞당기는 지표는 성과를 낮췄습니다. "
+               "그래서 매매 규칙은 200일선 · RSI(2) · 변동성만 씁니다.")
 
 
 def _record_form(pair, ins, td, px, n, fx, save_fn) -> None:

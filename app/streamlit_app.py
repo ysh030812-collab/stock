@@ -36,7 +36,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 추세 롱숏 TP·SL"
+APP_VERSION = "2026.11.09 참고 지표"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -251,7 +251,7 @@ def _save_trend_trade(t: dict) -> None:
 
 def view_planner() -> None:
     if strategy == "trend":
-        return ut.planner(md, PAIRS, TR.params(strat), equity, fx, uj.trades(), _save_trend_trade)
+        return ut.planner(md, PAIRS, TR.params(strat), equity, fx, uj.trades(), _save_trend_trade, strat)
     with st.container(horizontal=True, gap="medium"):
         pid = st.segmented_control("페어", [p["id"] for p in PAIRS], key="pair_id", required=True,
                                    format_func=lambda i: f"{PAIR_BY_ID[i]['name']} {PAIR_BY_ID[i]['signal']}",
