@@ -27,13 +27,14 @@ from ui_chart import OVERLAYS, PANELS, PERIODS, build_chart  # noqa: E402
 from ui_style import apply_style  # noqa: E402
 import ui_journal as uj  # noqa: E402
 import ui_settings as us  # noqa: E402
+import ui_backtest as ubt  # noqa: E402
 from levtrack.journal import TP_SPLITS  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 설정 자동 저장"
+APP_VERSION = "2026.11.09 백테스트"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
@@ -53,7 +54,7 @@ BASE_STRAT = load_strategy()
 REGIME = {"BULL": ("🟢 상승", "lt-bull"), "NEUTRAL": ("🟡 중립", "lt-neutral"), "BEAR": ("🔴 하락", "lt-bear")}
 TF_LABEL = {"1d": "일봉", "1h": "시간봉"}
 CAT_LABEL = {"trend": "추세", "momentum": "모멘텀", "structure": "구조", "volume": "거래량", "rs": "상대강도"}
-VIEWS = ["📊 대시보드", "📋 플래너", "📒 일지", "🧮 계산기", "📉 추적오차"]
+VIEWS = ["📊 대시보드", "📋 플래너", "📒 일지", "🧪 백테스트", "🧮 계산기", "📉 추적오차"]
 
 ss = st.session_state
 ss.setdefault("view", VIEWS[0])
@@ -423,6 +424,8 @@ def view_tracking() -> None:
     st.caption("SOXX 와 SOXL/SOXS 는 추종 지수가 달라 괴리가 상대적으로 큽니다.")
 
 
-{VIEWS[0]: view_dashboard, VIEWS[1]: view_planner, VIEWS[2]: lambda: uj.view(md, fx, lambda pid, tf: get_frame(mode, pid, tf), strat), VIEWS[3]: view_calc,
- VIEWS[4]: view_tracking}[ss["view"]]()
+{VIEWS[0]: view_dashboard, VIEWS[1]: view_planner,
+ VIEWS[2]: lambda: uj.view(md, fx, lambda pid, tf: get_frame(mode, pid, tf), strat),
+ VIEWS[3]: lambda: ubt.view(md, mode, PAIRS, strat, equity),
+ VIEWS[4]: view_calc, VIEWS[5]: view_tracking}[ss["view"]]()
 st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")

@@ -29,7 +29,8 @@ class Timing:
         return self.state
 
 
-def entry_timing(h: pd.DataFrame, direction: int, allowed: bool, cfg: dict, div_cfg: dict) -> Timing:
+def entry_timing(h: pd.DataFrame, direction: int, allowed: bool, cfg: dict, div_cfg: dict,
+                 pats: pd.DataFrame | None = None, divs: list | None = None) -> Timing:
     """h: 지표가 붙은 하위 봉 (시간봉 권장). direction: +1 롱 / -1 숏. allowed: 일봉 국면 계수 > 0.
 
     상태:
@@ -73,7 +74,8 @@ def entry_timing(h: pd.DataFrame, direction: int, allowed: bool, cfg: dict, div_
         touched = (win["High"] >= win["ema_fast"]).any() or (win["rsi"] > 100 - cfg["rsi_pullback"]).any()
 
     triggers = []
-    pats = candle_patterns(h.iloc[-30:]).iloc[-2:]
+    # pats/divs 를 미리 계산해 넘기면(백테스트) 재계산하지 않는다
+    pats = candle_patterns(h.iloc[-30:]).iloc[-2:] if pats is None else pats.iloc[-2:]
     for name in BULL_TRIGGERS if d > 0 else BEAR_TRIGGERS:
         if pats[name].any():
             triggers.append(PATTERNS[name][0])
@@ -81,7 +83,7 @@ def entry_timing(h: pd.DataFrame, direction: int, allowed: bool, cfg: dict, div_
         triggers.append("MACD 히스토그램 전환")
     if (prev["Close"] - prev["ema_fast"]) * d <= 0 < (last["Close"] - last["ema_fast"]) * d:
         triggers.append("EMA20 회복" if d > 0 else "EMA20 이탈")
-    divs = [dv for dv in recent_divergences(h, div_cfg) if dv["bias"] == d]
+    divs = [dv for dv in (recent_divergences(h, div_cfg) if divs is None else divs) if dv["bias"] == d]
     if divs:
         triggers.append(f"{'강세' if d > 0 else '약세'} 다이버전스({divs[0]['osc'].upper()})")
 

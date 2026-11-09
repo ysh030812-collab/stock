@@ -41,11 +41,14 @@ class MarketData:
         }
 
     # ---- public -------------------------------------------------------
-    def ohlc(self, ticker: str, interval: str = "1d") -> pd.DataFrame:
-        key = (ticker, interval)
+    def ohlc(self, ticker: str, interval: str = "1d", period: str | None = None) -> pd.DataFrame:
+        """period: None 이면 기본(일봉 10년, 시간봉 720일), 'max' 면 전체 기간 (백테스트용)."""
+        key = (ticker, interval, period)
         if key not in self._mem:
-            fn = self._demo if self.mode == "demo" else self._yahoo_cached
-            df = fn(ticker, interval)
+            if self.mode == "demo":
+                df = self._demo(ticker, interval)
+            else:
+                df = self._yahoo_cached(ticker, interval, period)
             if df is None or df.empty:
                 raise DataError(f"{ticker} ({interval}) 데이터를 받지 못했습니다")
             self._mem[key] = df
@@ -63,11 +66,12 @@ class MarketData:
             return None
 
     # ---- yahoo --------------------------------------------------------
-    def _yahoo_cached(self, ticker: str, interval: str) -> pd.DataFrame:
-        path = self.cache_dir / f"{ticker.replace('^', '_').replace('=', '_')}_{interval}.csv"
+    def _yahoo_cached(self, ticker: str, interval: str, period: str | None = None) -> pd.DataFrame:
+        suffix = f"_{period}" if period else ""
+        path = self.cache_dir / f"{ticker.replace('^', '_').replace('=', '_')}_{interval}{suffix}.csv"
         if path.exists() and time.time() - path.stat().st_mtime < self.max_age:
             return pd.read_csv(path, index_col=0, parse_dates=True)
-        df = fetch_yahoo(ticker, interval)
+        df = fetch_yahoo(ticker, interval, period)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         df.to_csv(path)
         return df
@@ -93,10 +97,10 @@ class MarketData:
         return to_daily(hourly)
 
 
-def fetch_yahoo(ticker: str, interval: str = "1d") -> pd.DataFrame:
+def fetch_yahoo(ticker: str, interval: str = "1d", period: str | None = None) -> pd.DataFrame:
     import yfinance as yf
 
-    df = yf.Ticker(ticker).history(period=PERIODS.get(interval, "10y"), interval=interval,
+    df = yf.Ticker(ticker).history(period=period or PERIODS.get(interval, "10y"), interval=interval,
                                    auto_adjust=False, actions=False)
     if df is None or df.empty:
         raise DataError(f"yfinance 에서 {ticker} 데이터가 비어 있습니다")
