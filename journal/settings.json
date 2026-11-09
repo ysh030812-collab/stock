@@ -12,5 +12,7 @@
  "atr": 2.0,
  "pct": 10.0,
  "strategy": "trend",
- "tl_vt": 40
+ "tl_vt": 40,
+ "mr_on": true,
+ "mrg": true
 }
