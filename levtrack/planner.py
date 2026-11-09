@@ -75,7 +75,10 @@ class TradePlan:
             ("4", "매도", t, q2, f"지정가 {self.l_tps[1]:.2f}", f"익절2 ({self.r_multiples[1]:.1f}R)"),
             ("5", "매도", t, q_rest, f"감시가 {self.l_trail:.2f}", "잔량 트레일링 — 매일 갱신"),
         ]
-        return pd.DataFrame(rows, columns=["#", "구분", "종목", "수량", "가격", "메모"]).set_index("#")
+        df = pd.DataFrame(rows, columns=["#", "구분", "종목", "수량", "가격", "메모"]).set_index("#")
+        # 수량이 0 인 익절·트레일링 줄은 뺀다 (진입·손절은 항상 표시)
+        keep = (df["수량"] > 0) | df.index.isin(["1", "2"])
+        return df[keep]
 
 
 def sigma_daily_from(d: pd.DataFrame, window: int = 20) -> float:

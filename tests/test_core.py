@@ -157,7 +157,9 @@ def test_end_to_end_demo(interval):
         assert (plan.u_stop - plan.u_entry) * plan.direction < 0
         assert plan.sizing.risk_usd <= 10_000 * STRAT["sizing"]["risk_pct"] + 1e-6
         assert sum(plan.exit_shares) == plan.sizing.shares
-        assert len(plan.order_sheet()) == 5
+        sheet = plan.order_sheet()
+        assert 2 <= len(sheet) <= 5
+        assert sheet.loc[sheet.index.difference(["1", "2"]), "수량"].sum() == plan.sizing.shares
         assert not plan.levels_table().empty
 
 

@@ -1,6 +1,6 @@
 """홈 화면 아이콘 · 앱 이름 주입.
 
-Streamlit 은 <head> 를 직접 수정할 수 없으므로, 높이 0 컴포넌트의 스크립트로
+Streamlit 은 <head> 를 직접 수정할 수 없으므로, 높이 0 iframe 의 스크립트로
 상위 문서(head)에 apple-touch-icon(iOS/iPadOS), icon·manifest(안드로이드) 태그를 넣는다.
 아이콘 파일은 app/static/ 에 있고 .streamlit/config.toml 의 enableStaticServing 으로 서빙된다.
 아이콘 재생성: python tools/make_icon.py
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-import streamlit.components.v1 as components
+import streamlit as st
 
 ICON_VERSION = "1"  # 아이콘을 바꾸면 올려서 캐시 무효화
 
@@ -70,4 +70,11 @@ _SCRIPT = """
 
 def inject_home_icon(name: str = "LevTrack", theme: str = "#0b1226") -> None:
     cfg = json.dumps({"name": name, "theme": theme, "version": ICON_VERSION})
-    components.html(_SCRIPT % {"cfg": cfg}, height=0)
+    html = _SCRIPT % {"cfg": cfg}
+    if hasattr(st, "iframe"):  # 같은 출처 iframe (스크립트 실행 가능). 화면 공간은 CSS 로 숨김
+        with st.container(key="lt_icon"):
+            st.iframe(html, height=1)
+    else:  # 구버전
+        import streamlit.components.v1 as components
+
+        components.html(html, height=0)
