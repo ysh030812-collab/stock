@@ -7,7 +7,7 @@
  "neu": 0.5,
  "vf": true,
  "sl": "atr",
- "tp": "r",
+ "tp": "resistance",
  "split": "균형 33/33/34",
  "atr": 2.0,
  "pct": 10.0
