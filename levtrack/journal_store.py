@@ -153,12 +153,12 @@ def token_problem(token: str) -> str | None:
     """명백히 잘못된 토큰 형식이면 안내 문구."""
     if not token:
         return None
+    if not token.startswith(("github_pat_", "ghp_")):
+        return "github_token 이 'github_pat_' 로 시작하지 않습니다. 토큰 이름이 아니라 생성 직후 보이는 긴 값을 넣어야 합니다."
     odd = sorted({c for c in token if not (c.isascii() and (c.isalnum() or c == "_"))})
     if odd:
         return (f"github_token 안에 토큰에 쓰이지 않는 문자 {' '.join(odd)} 가 있습니다. iPad 의 둥근 따옴표(“ ”) 자동 변환일 수 "
                 "있으니 Secrets 에서 따옴표를 지우고 키보드의 \" 로 다시 입력하세요.")
-    if not token.startswith(("github_pat_", "ghp_")):
-        return "github_token 이 'github_pat_' 로 시작하지 않습니다. 토큰 이름이 아니라 생성 직후 보이는 긴 값을 넣어야 합니다."
     if token.startswith("github_pat_") and len(token) < 80:
         return f"github_token 길이가 {len(token)}자로 짧습니다 (보통 90자 이상). 복사할 때 잘렸을 수 있습니다."
     return None
