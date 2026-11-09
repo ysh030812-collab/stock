@@ -209,3 +209,10 @@ def test_diagnose_flags_missing_contents_permission():
     from levtrack.journal_store import StoreError
     with pytest.raises(StoreError, match="Contents"):
         GitHubStore("t", "o/r", session=NoContents()).save([])
+
+
+def test_smart_quotes_and_odd_chars():
+    from levtrack.journal_store import clean_token, token_problem
+
+    assert clean_token("“ghp_" + "D" * 36 + "”") == "ghp_" + "D" * 36
+    assert "둥근 따옴표" in token_problem("ghp_ab“cd")
