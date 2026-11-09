@@ -61,7 +61,12 @@ class GitHubStore:
 
     def _check(self, r, what: str):
         if r.status_code >= 400:
-            raise StoreError(f"GitHub {what} 실패 ({r.status_code}): {r.text[:200]}")
+            hint = {
+                401: "토큰 값이 틀렸거나 만료·삭제됨 → GitHub 에서 토큰을 새로 만들어 Secrets 의 github_token 을 교체하세요",
+                403: "토큰 권한 부족 → 토큰의 Repository permissions 에서 Contents 를 'Read and write' 로 설정하세요",
+                404: f"저장소 {self.repo} 를 찾을 수 없음 → 토큰의 Repository access 에 이 저장소가 선택됐는지, repo 값이 맞는지 확인하세요",
+            }.get(r.status_code, r.text[:200])
+            raise StoreError(f"GitHub {what} 실패 ({r.status_code}): {hint}")
         return r
 
     def _ensure_branch(self) -> None:
@@ -103,10 +108,30 @@ class GitHubStore:
         self._sha = self._check(r, "일지 저장").json()["content"]["sha"]
 
 
+def clean_token(token) -> str:
+    """붙여넣을 때 섞이기 쉬운 공백·줄바꿈·따옴표·'Bearer ' 접두어 제거."""
+    t = "".join(str(token or "").split())
+    t = t.strip("'\"")
+    if t.lower().startswith("bearer"):
+        t = t[6:]
+    return t
+
+
+def token_problem(token: str) -> str | None:
+    """명백히 잘못된 토큰 형식이면 안내 문구."""
+    if not token:
+        return None
+    if not token.startswith(("github_pat_", "ghp_")):
+        return "github_token 이 'github_pat_' 로 시작하지 않습니다. 토큰 이름이 아니라 생성 직후 보이는 긴 값을 넣어야 합니다."
+    if token.startswith("github_pat_") and len(token) < 80:
+        return f"github_token 길이가 {len(token)}자로 짧습니다 (보통 90자 이상). 복사할 때 잘렸을 수 있습니다."
+    return None
+
+
 def make_store(secrets: dict | None, local_path: str | Path):
     """st.secrets['journal'] 에 github_token 이 있으면 GitHubStore, 없으면 LocalStore."""
     cfg = dict(secrets or {})
-    token = cfg.get("github_token")
+    token = clean_token(cfg.get("github_token"))
     if token:
         return GitHubStore(token, cfg.get("repo", "ysh030812-collab/stock"), cfg.get("branch", "journal-data"),
                            cfg.get("path", "journal/trades.json"))

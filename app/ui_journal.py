@@ -9,7 +9,9 @@ import pandas as pd
 import streamlit as st
 
 from levtrack import journal as J
-from levtrack.journal_store import make_store
+import hashlib
+
+from levtrack.journal_store import clean_token, make_store, token_problem
 
 LOCAL_PATH = Path(__file__).resolve().parent.parent / "data" / "journal.json"
 ss = st.session_state
@@ -24,12 +26,13 @@ def _secrets() -> dict:
 
 
 @st.cache_resource
-def _store(has_token: bool):
+def _store(token_key: str):  # 토큰이 바뀌면 새 저장소 객체를 만든다
     return make_store(_secrets(), LOCAL_PATH)
 
 
 def store():
-    return _store(bool(_secrets().get("github_token")))
+    tok = clean_token(_secrets().get("github_token"))
+    return _store(hashlib.sha256(tok.encode()).hexdigest()[:16] if tok else "")
 
 
 def trades() -> list[dict]:
@@ -54,6 +57,7 @@ def save(msg: str) -> bool:
 
 def reload() -> None:
     ss.pop("journal", None)
+    _store.clear()
 
 
 # ------------------------------------------------------------------ 플래너: 진입 기록
@@ -126,6 +130,10 @@ def view(md, fx) -> None:
         st.button("다시 불러오기", icon="🔄", on_click=reload)
     if ss.get("journal_err"):
         st.error(f"일지를 불러오지 못했습니다: {ss['journal_err']}")
+        st.caption("Secrets 를 고친 뒤 위의 **다시 불러오기**를 누르세요. 그래도 같으면 Manage app → Reboot app.")
+    problem = token_problem(clean_token(_secrets().get("github_token")))
+    if problem:
+        st.warning(problem, icon="🔑")
     if s.kind == "local":
         st.warning("일지가 **서버 파일**에 저장되고 있습니다. Streamlit Cloud 에서는 앱이 재시작되면 지워질 수 있으니 "
                    "아래 **백업**을 받아 두거나, README 의 'GitHub 저장 설정'을 해 주세요.", icon="⚠️")

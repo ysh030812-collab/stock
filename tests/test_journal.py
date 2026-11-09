@@ -155,3 +155,23 @@ def test_github_store_creates_branch_and_roundtrips():
     s.save([trade()] * 3)
     assert len(GitHubStore("tok", "o/r", session=gh).load()) == 3
     assert gh.headers["Authorization"] == "Bearer tok"
+
+
+def test_token_cleanup_and_checks():
+    from levtrack.journal_store import StoreError, clean_token, token_problem
+
+    raw = '  "github_pat_' + "A" * 85 + '\n" '
+    assert clean_token(raw) == "github_pat_" + "A" * 85
+    assert clean_token("Bearer github_pat_x") == "github_pat_x"
+    assert token_problem(clean_token(raw)) is None
+    assert "시작하지" in token_problem("levtrack-journal")
+    assert "짧습니다" in token_problem("github_pat_abc")
+    assert isinstance(make_store({"github_token": raw}, "x.json"), GitHubStore)
+
+    class Bad(FakeGitHub):
+        def get(self, url, params=None):
+            return FakeResp(401, {"message": "Bad credentials"})
+
+    s = GitHubStore("tok", "o/r", session=Bad())
+    with pytest.raises(StoreError, match="토큰 값이 틀렸거나"):
+        s.load()
