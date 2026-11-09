@@ -38,6 +38,27 @@ class Sizing:
     vol_factor: float
     binding: str  # 가장 작은 제약
 
+    @property
+    def base_weight(self) -> float:
+        return min(self.w_risk, self.w_vol, self.w_cap)
+
+    def explain(self) -> str:
+        """수량이 정해진 과정을 한 줄로."""
+        return (f"리스크 기준 {self.w_risk:.1%} · 변동성 타깃 {self.w_vol:.1%} · 페어 상한 {self.w_cap:.0%} "
+                f"→ 가장 작은 값({self.binding}) {self.base_weight:.1%} × 국면 {self.regime_mult:g} "
+                f"× 변동성 {self.vol_factor:.2f} = {self.base_weight * self.regime_mult * self.vol_factor:.1%}")
+
+    def bottleneck(self) -> str | None:
+        """비중을 가장 크게 깎은 요인 (리스크 기준 대비)."""
+        cuts = []
+        if self.binding != "리스크 기준" and self.w_risk > 0:
+            cuts.append((self.base_weight / self.w_risk, f"{self.binding} 제한 ({self.w_risk:.1%} → {self.base_weight:.1%})"))
+        if self.regime_mult < 1:
+            cuts.append((self.regime_mult, f"국면 계수 ×{self.regime_mult:g}"))
+        if self.vol_factor < 1:
+            cuts.append((self.vol_factor, f"변동성 계수 ×{self.vol_factor:.2f}"))
+        return min(cuts)[1] if cuts else None
+
     def as_rows(self) -> list[tuple[str, str]]:
         return [
             ("리스크 기준 비중", f"{self.w_risk:.1%}"),

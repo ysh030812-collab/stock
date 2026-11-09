@@ -190,3 +190,14 @@ def test_fetch_yahoo_normalizes(monkeypatch, tmp_path):
     assert (tmp_path / "QQQ_1h.csv").exists()
     cached = MarketData(PAIRS, mode="yahoo", cache_dir=tmp_path).ohlc("QQQ", "1h")
     assert cached["Close"].tolist() == [1.0, 2.0, 3.0]
+
+
+def test_sizing_explain_and_bottleneck():
+    # 변동성 큰 종목: 리스크 기준은 크지만 변동성 타깃에 걸리고, 중립(×0.5)·변동성(×0.5)으로 더 줄어듦
+    s = size_position(10_000, 50, 49, 3, 0.03, 0.03, 0.20, 0.30, regime_mult=0.5, vol_factor=0.5)
+    assert s.binding == "변동성 타깃"
+    assert s.w_vol == pytest.approx(0.20 / (3 * 0.03 * math.sqrt(252)))
+    assert "변동성 타깃" in s.explain()
+    assert s.bottleneck().startswith("변동성 타깃 제한")
+    plain = size_position(10_000, 80, 72.32, 3, 0.22 / math.sqrt(252), 0.01, 0.20, 0.30)
+    assert plain.bottleneck() is None

@@ -85,6 +85,14 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
                              key="risk", bind="query-params") / 100
         max_pair = st.slider("페어당 최대 비중 (%)", 5, 100, int(BASE_STRAT["sizing"]["max_pair_weight"] * 100), 5,
                              key="maxw", bind="query-params") / 100
+        target_vol = st.slider("목표 연변동성 (%)", 10, 80, int(BASE_STRAT["sizing"]["target_vol"] * 100), 5,
+                               key="tvol", bind="query-params",
+                               help="레버리지 ETF 포지션이 계좌에 주는 변동성 한도. 높이면 변동성 큰 종목(SOXL 등)도 더 많이 삽니다.") / 100
+        neutral_mult = st.slider("중립 국면 비중 계수", 0.0, 1.0,
+                                 float(BASE_STRAT["regime_multiplier"]["NEUTRAL"]["long"]), 0.25, key="neu",
+                                 bind="query-params", help="일봉 국면이 중립일 때 비중에 곱하는 값 (1이면 줄이지 않음)")
+        use_vf = st.toggle("변동성 높을 때 비중 줄이기", value=True, key="vf", bind="query-params",
+                           help="끄면 VIX·실현변동성이 높아도 비중을 줄이지 않습니다.")
         sl_method = st.selectbox("손절 방식", list(SL_METHODS), format_func=SL_METHODS.get, key="sl",
                                  bind="query-params")
         tp_method = st.selectbox("익절 방식", list(TP_METHODS), format_func=TP_METHODS.get, key="tp",
@@ -97,7 +105,8 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
         st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")
 
 strat = copy.deepcopy(BASE_STRAT)
-strat["sizing"].update(risk_pct=risk_pct, max_pair_weight=max_pair)
+strat["sizing"].update(risk_pct=risk_pct, max_pair_weight=max_pair, target_vol=target_vol)
+strat["regime_multiplier"]["NEUTRAL"] = {"long": neutral_mult, "short": neutral_mult}
 strat["levels"].update(sl_method=sl_method, tp_method=tp_method, atr_mult=atr_mult, percent=pct_stop)
 
 
@@ -132,7 +141,7 @@ def plan_for(a: PairAnalysis, ins: dict, interval: str, **kw):
     d = get_frame(mode, a.pair["id"], interval)
     return build_plan(
         d, a.pair["signal"], ins["ticker"], k, md.last(ins["ticker"], interval), equity, strat,
-        regime_mult=a.signal.multiplier(direction, strat), vol_factor=a.signal.vol_factor,
+        regime_mult=a.signal.multiplier(direction, strat), vol_factor=a.signal.vol_factor if use_vf else 1.0,
         sigma_daily=sigma_daily_from(a.daily), expense=ins.get("expense", 0.0), **kw,
     )
 
@@ -261,6 +270,8 @@ def view_planner() -> None:
         st.metric(f"{plan.letf_ticker} 손절폭", f"{plan.l_stop / plan.l_entry - 1:+.1%}",
                   f"기초 {plan.u_stop / plan.u_entry - 1:+.1%}", delta_color="off", delta_arrow="off", border=True,
                   width=140)
+    why = plan.sizing.bottleneck()
+    st.caption("🧮 " + plan.sizing.explain() + (f"  \n가장 크게 줄인 요인: **{why}** — ⚙️ 설정에서 조절할 수 있습니다." if why else ""))
     if plan.sizing.shares == 0:
         st.info("현재 국면에서는 이 방향 진입을 권장하지 않습니다 (국면 계수 0 또는 계좌 대비 리스크 부족).")
     for n in plan.notes:
