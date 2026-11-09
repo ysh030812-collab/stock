@@ -10,5 +10,7 @@
  "tp": "resistance",
  "split": "균형 33/33/34",
  "atr": 2.0,
- "pct": 10.0
+ "pct": 10.0,
+ "strategy": "trend",
+ "tl_vt": 40
 }
