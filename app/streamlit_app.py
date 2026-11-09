@@ -29,6 +29,18 @@ from ui_style import apply_style  # noqa: E402
 STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
+
+APP_VERSION = "2026.11.09 태블릿 UI"
+MIN_STREAMLIT = (1, 67)
+_st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
+if _st_ver < MIN_STREAMLIT:
+    st.error(
+        f"이 앱은 Streamlit {'.'.join(map(str, MIN_STREAMLIT))} 이상이 필요하지만 현재 {st.__version__} 입니다.  \n"
+        "Streamlit Community Cloud 라면 앱 화면 오른쪽 아래 **Manage app → ⋮ → Reboot app** 을 눌러 "
+        "requirements.txt 를 다시 설치하세요."
+    )
+    st.caption(f"LevTrack {APP_VERSION}")
+    st.stop()
 inject_home_icon("LevTrack")
 apply_style()
 
@@ -82,6 +94,7 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
         pct_stop = st.slider("고정 % 손절 (기초 기준)", 1.0, 10.0, BASE_STRAT["levels"]["percent"] * 100, 0.5,
                              key="pct", bind="query-params") / 100
         st.caption("설정은 주소(URL)에 저장됩니다. 원하는 값으로 맞춘 뒤 홈 화면에 추가하면 다음에도 그대로 열립니다.")
+        st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")
 
 strat = copy.deepcopy(BASE_STRAT)
 strat["sizing"].update(risk_pct=risk_pct, max_pair_weight=max_pair)
@@ -355,3 +368,4 @@ def view_tracking() -> None:
 
 
 {VIEWS[0]: view_dashboard, VIEWS[1]: view_planner, VIEWS[2]: view_calc, VIEWS[3]: view_tracking}[ss["view"]]()
+st.caption(f"LevTrack {APP_VERSION} · Streamlit {st.__version__}")
