@@ -190,6 +190,22 @@ def test_diagnose_reports_each_step():
 
     token = "github_pat_" + "B" * 82
     ok = GitHubStore(token, "o/r", session=GH()).diagnose()
-    assert [x[0] for x in ok] == [True, True, True] and "me" in ok[0][1]
+    assert [x[0] for x in ok] == [True, True, True, True] and "me" in ok[0][1]
     bad = GitHubStore(token, "o/r", session=GH(401)).diagnose()
     assert bad[0][0] is False and "…BBBB (93자)" in bad[0][1]
+
+
+def test_diagnose_flags_missing_contents_permission():
+    class NoContents(FakeGitHub):
+        def get(self, url, params=None):
+            if url.endswith("/user"):
+                return FakeResp(200, {"login": "me"})
+            if "/git/ref/" in url or "/contents/" in url:
+                return FakeResp(404, {"message": "Not Found"})
+            return super().get(url, params)
+
+    res = GitHubStore("github_pat_" + "C" * 82, "o/r", session=NoContents()).diagnose()
+    assert [x[0] for x in res] == [True, True, False] and "Contents" in res[2][1]
+    from levtrack.journal_store import StoreError
+    with pytest.raises(StoreError, match="Contents"):
+        GitHubStore("t", "o/r", session=NoContents()).save([])

@@ -65,7 +65,10 @@ class GitHubStore:
             hint = {
                 401: "토큰 값이 틀렸거나 만료·삭제됨 → GitHub 에서 토큰을 새로 만들어 Secrets 의 github_token 을 교체하세요",
                 403: "토큰 권한 부족 → 토큰의 Repository permissions 에서 Contents 를 'Read and write' 로 설정하세요",
-                404: f"저장소 {self.repo} 를 찾을 수 없음 → 토큰의 Repository access 에 이 저장소가 선택됐는지, repo 값이 맞는지 확인하세요",
+                404: (f"저장소 {self.repo} 를 찾을 수 없음 → 토큰의 Repository access 에 이 저장소가 선택됐는지, "
+                      "Secrets 의 repo 값이 맞는지 확인하세요") if what == "저장소 조회" else
+                     ("저장소 내용(Contents) 권한 없음 → 토큰의 Permissions 에 Contents 를 추가하고 'Read and write' 로 "
+                      "설정하세요 (Classic 토큰이면 repo 범위 체크)"),
             }.get(r.status_code, r.text[:200])
             raise StoreError(f"GitHub {what} 실패 ({r.status_code}): {hint}")
         return r
@@ -83,6 +86,13 @@ class GitHubStore:
             out.append((False, f"저장소 {self.repo} 접근 실패 ({r.status_code}) — 토큰의 Repository access 에 이 저장소를 선택하세요"))
             return out
         out.append((True, f"저장소 {self.repo} 접근 가능"))
+        default = r.json().get("default_branch", "main")
+        r = self.s.get(self._url(f"git/ref/heads/{default}"))
+        if r.status_code != 200:
+            out.append((False, f"Contents 권한 없음 ({r.status_code}) — 토큰 Permissions 에 Contents 를 추가하고 "
+                               "'Read and write' 로 바꾸세요 (Classic 토큰이면 repo 범위 체크)"))
+            return out
+        out.append((True, "Contents 읽기 권한 확인"))
         # 쓰기 권한: 기본 브랜치에 빈 ref 생성 없이 확인하는 공식 방법이 없어, 일지 브랜치 확인/생성으로 대신함
         try:
             self._ensure_branch()
