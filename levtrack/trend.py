@@ -348,3 +348,49 @@ def levels(u: pd.DataFrame, td: dict, p: dict | None = None, emergency_sigma: fl
                 rows.append({"구분": "반등 숏 진입", "가격": rsi_target_price(c, p["rsi_n"], p["short_entry"]), "기준": "종가",
                              "설명": f"종가가 이 가격 이상이면 RSI({p['rsi_n']}) > {p['short_entry']} → 다음 날 3배 숏"})
     return {"rows": rows, "sigma_daily": sd}
+
+
+# ------------------------------------------------------------------ 레버리지 비교 (롱 전략 1x/2x/3x)
+LEV_FEES = {1: 0.0020, 2: 0.0095, 3: 0.0090}  # 대략적인 연 보수 (예: QQQ 0.20%, QLD 0.95%, TQQQ 0.84~0.9%)
+
+
+def compare_leverage(u: pd.DataFrame, strat: dict | None = None, rf: pd.Series | None = None,
+                     start: str | None = None, cost_bps: float = 10.0, sizing: str = "full",
+                     include_bounce: bool = False, borrow_spread: float = 0.005, equity0: float = 10_000.0,
+                     levels=(1, 2, 3)) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """같은 롱 규칙(추세 롱 [+ 과매도 롱])을 1·2·3배 상품으로 운용했을 때와 그냥 보유했을 때 비교.
+
+    sizing='full' : 신호가 있으면 100% 투자 / 'vol' : 목표 변동성 ÷ (배수 × 20일 변동성), 최대 100%
+    k배 상품 일간 수익 = k·r − (k−1)·(rf+spread) − 보수,  현금 = rf.  신호는 종가 → 다음 날부터 적용.
+    반환: (자산 곡선 DataFrame, 통계 DataFrame)
+    """
+    p = params(strat)
+    s = signals(u, p)
+    c = u["Close"]
+    r = c.pct_change().fillna(0)
+    rfd = (rf.reindex(c.index, method="ffill").fillna(0).clip(lower=0) / 252) if rf is not None else 0 * r
+    sp = borrow_spread / 252 if rf is not None else 0.0
+    on = (s["mode"] == "TREND").astype(float)
+    if include_bounce:
+        on = on + (s["mode"] == "BOUNCE").astype(float) * p["bounce_scale"]
+    rv = s["rv"]
+    curves = {}
+    for k in levels:
+        rk = k * r - (k - 1) * (rfd + sp) - LEV_FEES.get(k, 0.009) / 252
+        base = pd.Series(1.0, index=c.index) if sizing == "full" else (p["vt"] / (k * rv)).clip(upper=1.0).fillna(0)
+        w = (on * base).clip(upper=1.0).shift(1).fillna(0)
+        ret = w * rk + (1 - w) * rfd - w.diff().abs().fillna(0) * cost_bps / 10_000
+        curves[f"추세 롱 {k}배"] = (1 + ret).cumprod()
+        curves[f"보유 {k}배"] = (1 + rk.clip(lower=-1)).cumprod()
+    df = pd.DataFrame(curves)
+    i0 = p["ma"] + 5
+    df = df.iloc[i0:]
+    if start:
+        df = df[df.index >= pd.Timestamp(start)]
+    df = equity0 * df / df.iloc[0]
+    order = [f"추세 롱 {k}배" for k in levels] + [f"보유 {k}배" for k in levels]
+    df = df[order]
+    stats = pd.DataFrame({col: perf_stats(df[col].clip(lower=1e-6)) for col in df}).T
+    expo = {f"추세 롱 {k}배": float((on.shift(1).fillna(0).loc[df.index] > 0).mean()) for k in levels}
+    stats["투자 기간 비율"] = pd.Series(expo).reindex(stats.index).fillna(1.0)
+    return df, stats

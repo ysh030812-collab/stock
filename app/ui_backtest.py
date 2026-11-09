@@ -55,9 +55,12 @@ def _fmt_stats(df: pd.DataFrame):
 def view(md, mode: str, pairs: list[dict], strat: dict, equity: float, strategy: str = "trend") -> None:
     st.markdown("#### 🧪 백테스트")
     by_id = {p["id"]: p for p in pairs}
-    strat_bt = st.segmented_control("전략", ["trend", "swing"], key="bt_strat", required=True, default=strategy,
-                                    format_func={"trend": "📈 추세 롱숏", "swing": "🧪 스윙 (실험용)"}.get,
+    strat_bt = st.segmented_control("전략", ["trend", "lev", "swing"], key="bt_strat", required=True, default=strategy,
+                                    format_func={"trend": "📈 추세 롱숏", "lev": "⚖️ 레버리지 비교 (롱)",
+                                                 "swing": "🧪 스윙 (실험용)"}.get,
                                     persist_state="session")
+    if strat_bt == "lev":
+        return _lev_view(md, mode, pairs, strat, equity)
     with st.container(horizontal=True, gap="medium", vertical_alignment="bottom"):
         pid = st.segmented_control("페어", list(by_id), key="bt_pair", required=True, default=pairs[0]["id"],
                                    format_func=lambda i: f"{by_id[i]['name']} {by_id[i]['signal']}",
@@ -177,4 +180,110 @@ def view(md, mode: str, pairs: list[dict], strat: dict, equity: float, strategy:
             "같은 날 손절과 익절이 모두 가능하면 손절을 먼저 처리(보수적).\n"
             "- 현금 이자·세금·환율은 반영하지 않습니다. 과거 성과가 미래를 보장하지 않습니다.\n"
             "- 설정을 바꿔 가며 가장 좋은 값을 고르면 **과최적화**되기 쉽습니다. 여러 페어·기간에서 고르게 괜찮은 설정을 고르세요."
+        )
+
+
+# ------------------------------------------------------------------ 레버리지 비교 (롱 전략 1·2·3배)
+TWO_X = {"NDX": "QLD", "SEMI": "USD", "SPX": "SSO"}
+LEV_COLORS = {1: "#2f9e44", 2: "#1c7ed6", 3: "#e8590c"}
+
+
+@st.cache_data(show_spinner="레버리지별 계산 중…", max_entries=20)
+def _run_lev(_md, mode: str, signal: str, strat_json: str, start: str, cost_bps: float, sizing: str, bounce: bool,
+             equity0: float):
+    strat = json.loads(strat_json)
+    u = _md.ohlc(signal, "1d", "max")
+    rf = None
+    if mode != "demo":
+        try:
+            rf = (_md.ohlc("^IRX", "1d", "max")["Close"] / 100).clip(lower=0)
+        except Exception:  # noqa: BLE001
+            rf = None
+    return TR.compare_leverage(u, strat, rf=rf, start=start, cost_bps=cost_bps, sizing=sizing,
+                               include_bounce=bounce, equity0=equity0)
+
+
+def _lev_view(md, mode: str, pairs: list[dict], strat: dict, equity: float) -> None:
+    by_id = {p["id"]: p for p in pairs}
+    with st.container(horizontal=True, gap="medium", vertical_alignment="bottom"):
+        pid = st.segmented_control("페어", list(by_id), key="bt_pair", required=True, default=pairs[0]["id"],
+                                   format_func=lambda i: f"{by_id[i]['name']} {by_id[i]['signal']}",
+                                   persist_state="session")
+        sizing = st.segmented_control("비중", ["full", "vol"], key="lev_sizing", required=True, default="full",
+                                      format_func={"full": "신호 때 전액 투자", "vol": "변동성 맞춤"}.get,
+                                      persist_state="session",
+                                      help="변동성 맞춤: 목표 변동성(⚙️ 설정) ÷ (배수 × 최근 20일 변동성), 최대 100%")
+        bounce = st.toggle("과매도 롱 포함", key="lev_bounce", persist_state="session",
+                           help="200일선 아래 RSI(2) < 10 일 때 짧게 롱 (절반 비중)")
+    pair = by_id[pid]
+    try:
+        first = md.ohlc(pair["signal"], "1d", "max").index[0]
+    except Exception as e:  # noqa: BLE001
+        st.error(f"데이터를 받지 못했습니다: {e}")
+        return
+    years = list(range(first.year + 1, pd.Timestamp.today().year))
+    with st.container(horizontal=True, gap="medium", vertical_alignment="bottom"):
+        start_y = st.selectbox("시작 연도", years, index=0, key=f"lev_start_{pid}", width=150)
+        cost = st.number_input("편도 비용 (bp)", value=10.0, min_value=0.0, step=5.0, key="lev_cost", width=150)
+        run = st.button("▶ 비교 실행", type="primary", key="lev_run")
+    params = (mode, pid, f"{start_y}-01-01", float(cost), sizing, bool(bounce), float(equity),
+              json.dumps(strat, sort_keys=True, ensure_ascii=False))
+    if run:
+        ss["lev_params"] = params
+    if ss.get("lev_params") != params:
+        st.info("조건을 고른 뒤 **비교 실행**을 누르세요. 같은 롱 규칙(200일선 ±3% 추세 롱)을 1배·2배·3배 상품으로 운용했을 때와 "
+                "그냥 보유했을 때를 나란히 비교합니다.")
+        return
+    try:
+        df, stt = _run_lev(md, mode, pair["signal"], params[7], params[2], params[3], sizing, bool(bounce), float(equity))
+    except Exception as e:  # noqa: BLE001
+        st.error(f"계산 실패: {e}")
+        return
+
+    names = {1: pair["signal"], 2: TWO_X.get(pid, "2배"),
+             3: next((i["ticker"] for i in pair["instruments"] if i["leverage"] == 3), "3배")}
+    st.caption(f"{df.index[0].date()} ~ {df.index[-1].date()} · 초기 ${equity:,.0f} · "
+               f"1배 = {names[1]}, 2배 = {names[2]}, 3배 = {names[3]} (기초지수로 합성: 배수 × 일간수익 − 차입비용 − 보수, 현금은 국채 금리)")
+    best = stt["샤프"].idxmax()
+    with st.container(horizontal=True, gap="small"):
+        for k in (1, 2, 3):
+            row = stt.loc[f"추세 롱 {k}배"]
+            st.metric(f"추세 롱 {k}배 ({names[k]})", f"{row['CAGR']:+.1%}", f"MDD {row['MDD']:.0%} · 샤프 {row['샤프']:.2f}",
+                      delta_color="off", delta_arrow="off", border=True, width=200)
+    st.caption(f"위험 대비 수익(샤프)이 가장 높은 것: **{best}**")
+    show = stt[["최종 자산", "CAGR", "MDD", "샤프", "연변동성", "투자 기간 비율"]]
+    st.table(show.style.format({"최종 자산": "${:,.0f}", "CAGR": "{:+.1%}", "MDD": "{:.1%}", "샤프": "{:.2f}",
+                                "연변동성": "{:.1%}", "투자 기간 비율": "{:.0%}"}))
+
+    fig = go.Figure()
+    for col in df.columns:
+        k = int(col.split()[-1][0])
+        fig.add_trace(go.Scatter(x=df.index, y=df[col], name=f"{col} ({names[k]})",
+                                 line=dict(color=LEV_COLORS[k], width=2.2 if col.startswith("추세") else 1.1,
+                                           dash="solid" if col.startswith("추세") else "dot")))
+    fig.update_yaxes(type="log", fixedrange=True)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_layout(height=420, margin=dict(l=8, r=8, t=30, b=8), title="자산 곡선 (로그) — 실선: 추세 롱, 점선: 그냥 보유",
+                      dragmode=False, legend=dict(orientation="h", y=-0.15), hovermode="x unified")
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key="lev_eq")
+
+    dd = df / df.cummax() - 1
+    fig2 = go.Figure()
+    for col in [c for c in df.columns if c.startswith("추세")]:
+        k = int(col.split()[-1][0])
+        fig2.add_trace(go.Scatter(x=dd.index, y=dd[col], name=col, line=dict(color=LEV_COLORS[k], width=1.5)))
+    fig2.update_yaxes(tickformat=".0%", fixedrange=True)
+    fig2.update_xaxes(fixedrange=True)
+    fig2.update_layout(height=260, margin=dict(l=8, r=8, t=30, b=8), title="추세 롱 낙폭", dragmode=False,
+                       legend=dict(orientation="h", y=-0.2), hovermode="x unified")
+    st.plotly_chart(fig2, width="stretch", config={"displayModeBar": False}, key="lev_dd")
+
+    with st.expander("📅 연도별 수익률"):
+        st.table(yearly_returns(df).style.format("{:+.1%}", na_rep="-"))
+    with st.expander("⚠️ 읽는 법 · 한계"):
+        st.markdown(
+            "- **추세 롱**: 종가가 200일선 +3% 위면 다음 날부터 보유, −3% 아래면 현금(국채 금리). 신호는 종가 → 다음 날 적용.\n"
+            "- **그냥 보유**: 같은 배수 상품을 계속 들고 있는 경우 (레버리지 ETF 는 하락장에서 회복이 매우 어렵습니다).\n"
+            "- 배수가 커질수록 수익이 비례해서 늘지 않습니다: 차입 비용과 변동성 감쇠 때문에 **2배와 3배의 수익 차이는 작고 낙폭 차이는 큽니다**.\n"
+            "- 합성 가격이라 실제 ETF 와 추적오차·차입 조건이 다를 수 있고, 세금은 반영하지 않았습니다. 과거 성과가 미래를 보장하지 않습니다."
         )

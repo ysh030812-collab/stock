@@ -115,3 +115,16 @@ def test_mr_gate_turns_off_losing_legs():
     assert mr_on < mr_off
     gated = on["raw_mode"].isin(["BOUNCE", "SHORT"]) & (on["mode"] == "CASH")
     assert (on.loc[gated, "mr_perf"].fillna(-1) <= 0).all()
+
+
+def test_compare_leverage(demo):
+    df, st_ = T.compare_leverage(demo, None, start=str(demo.index[600].date()))
+    assert list(df.columns) == ["추세 롱 1배", "추세 롱 2배", "추세 롱 3배", "보유 1배", "보유 2배", "보유 3배"]
+    assert np.allclose(df.iloc[0], 10_000) and {"CAGR", "MDD", "샤프", "투자 기간 비율"} <= set(st_.columns)
+    # 보유 1배 = 기초지수 수익 (보수 0.2% 만큼 낮음)
+    c = demo["Close"].loc[df.index]
+    assert df["보유 1배"].iloc[-1] / 10_000 == pytest.approx((c.iloc[-1] / c.iloc[0]), rel=0.05)
+    # 배수가 클수록 변동성이 큼 (전액 투자)
+    assert st_.loc["보유 3배", "연변동성"] > st_.loc["보유 2배", "연변동성"] > st_.loc["보유 1배", "연변동성"]
+    vdf, vst = T.compare_leverage(demo, None, sizing="vol", include_bounce=True)
+    assert vst.loc["추세 롱 3배", "연변동성"] < st_.loc["추세 롱 3배", "연변동성"] * 1.5

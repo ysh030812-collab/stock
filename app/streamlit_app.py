@@ -36,7 +36,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 st.set_page_config(page_title="LevTrack", page_icon=str(STATIC / "icon-192.png"), layout="wide",
                    initial_sidebar_state="collapsed")
 
-APP_VERSION = "2026.11.09 역추세 게이트"
+APP_VERSION = "2026.11.09 레버리지 비교"
 MIN_STREAMLIT = (1, 67)
 _st_ver = tuple(int(x) for x in st.__version__.split(".")[:2] if x.isdigit())
 if _st_ver < MIN_STREAMLIT:
